@@ -12,7 +12,7 @@
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?style=flat-square&logo=tauri)](https://tauri.app/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-[Install](#install) · [Accounts](#accounts) · [Features](#features) · [Shortcuts](#keyboard-shortcuts) · [Build from source](#build-from-source)
+[Install](#install) · [Accounts](#accounts) · [Features](#features) · [Shortcuts](#keyboard-shortcuts) · [Build from source](#build-from-source) · [Privacy](PRIVACY.md) · [Terms](TERMS.md)
 
 </div>
 
@@ -123,5 +123,7 @@ The frontend (`ui/`) is plain HTML, CSS and ES modules embedded into the binary 
 ## License
 
 Pear Mail is released under the [MIT License](LICENSE). Bundled third-party code keeps its own license: [PDF.js](ui/vendor/pdfjs/LICENSE) (Apache-2.0) and [imap-proto](vendor/imap-proto) (MIT OR Apache-2.0).
+
+Use of Pear Mail is subject to the [Terms of Service](TERMS.md). See the [Privacy Policy](PRIVACY.md) for how your data is handled (in short: it never leaves your computer except to reach your own mail provider).
 
 Pear Mail is an independent project and is not affiliated with Apple, Google, Microsoft or any other mail provider.

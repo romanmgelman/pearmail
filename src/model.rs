@@ -111,8 +111,12 @@ pub struct MessageDetail {
     pub reply_to: Vec<Person>,
     pub to: Vec<Person>,
     pub cc: Vec<Person>,
+    /// Only drafts carry a Bcc header.
+    pub bcc: Vec<Person>,
     pub subject: String,
     pub date: i64,
+    /// The message this one replies to (bare id), so a resumed draft still threads.
+    pub in_reply_to: Option<String>,
     /// Sanitized HTML (always present: plain text is converted to HTML).
     pub html: String,
     pub text: String,

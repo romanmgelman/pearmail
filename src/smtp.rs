@@ -144,4 +144,29 @@ mod tests {
         assert!(s.contains(&mid));
         assert!(build("me@icloud.com", "Me", &OutgoingMessage { to: vec![], ..m.clone() }, false, None).is_err());
     }
+
+    /// A saved draft must hold everything needed to resume it: Bcc and the reply's threading.
+    #[test]
+    fn draft_keeps_bcc_and_threading() {
+        let m = OutgoingMessage {
+            to: vec!["Bob <bob@example.com>".into()],
+            cc: vec![],
+            bcc: vec!["secret@example.com".into()],
+            subject: "Re: Hi".into(),
+            html: "<p>Draft</p>".into(),
+            text: "Draft".into(),
+            attachments: vec![],
+            in_reply_to: Some("<orig@example.com>".into()),
+            references: vec!["<orig@example.com>".into()],
+            draft_uid: Some(7),
+        };
+        let (msg, _) = build("me@icloud.com", "Me", &m, true, None).unwrap();
+        let raw = msg.formatted();
+        let parsed = crate::mime::parse(&raw).unwrap();
+        assert_eq!(crate::mime::people(parsed.bcc())[0].email, "secret@example.com");
+        assert_eq!(crate::mime::thread_ids(&parsed).1, "orig@example.com");
+        // What actually goes out never carries Bcc.
+        let (sent, _) = build("me@icloud.com", "Me", &m, false, None).unwrap();
+        assert!(!String::from_utf8(sent.formatted()).unwrap().contains("secret@example.com"));
+    }
 }

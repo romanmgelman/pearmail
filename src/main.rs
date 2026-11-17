@@ -230,6 +230,7 @@ It should show the Pear Mail name and icon.", || {});
             commands::save_attachment_png,
             commands::attachment_data,
             commands::stage_attachment,
+            commands::stage_message_attachments,
             commands::set_run_in_background,
         ])
         .run(tauri::generate_context!())

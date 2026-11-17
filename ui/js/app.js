@@ -1330,14 +1330,13 @@ $("list").addEventListener("mousedown", (e) => {
     updateSelectionClasses();
     afterSelectionChange();
     e.preventDefault();
+  } else if (currentRole() === "drafts") {
+    // Like iCloud Mail: a draft opens straight in the compose window, ready to keep writing.
+    if (!state.selected.has(id) || state.selected.size > 1) selectOnly(id, { open: true });
+    openDraftById(id);
   } else if (!state.selected.has(id) || state.selected.size > 1) {
     selectOnly(id, { open: true });
   }
-});
-
-$("list").addEventListener("dblclick", (e) => {
-  const row = e.target.closest(".msg-row");
-  if (row && currentRole() === "drafts" && state.detail?.id === row.dataset.id) editDraft();
 });
 
 $("list").addEventListener("contextmenu", (e) => {
@@ -1969,20 +1968,24 @@ function cardElement(conv, id) {
   const people = (label, ps) =>
     ps.length ? `<div class="rcpts"><b>${label}:</b> ${ps.map((p, i) => `<span class="p" data-i="${label}${i}" title="${esc(p.email)}"><span class="pn">${esc(displayName(p))}</span>${icon("chevronRight", "chev")}</span>`).join("; ")}</div>` : "";
   const acct = acctById(d.account);
+  // A draft isn't received mail: it gets "Continue Editing" instead of Reply/Forward.
+  const isDraft = !d.local && messageRole(d) === "drafts";
   const acctLine = multi() && acct ? `<div class="rcpts acct-line"><span class="acct-dot" style="background:${acctColor(acct.id)}"></span>${esc(acct.email)}</div>` : "";
   el.innerHTML = `
       <div class="msg-head${multiConv ? " collapsible" : ""}"${multiConv ? ' title="Hide this message"' : ""}>
         ${avatarHtml(d.from)}
         <div class="meta">
           <div class="sender"><span class="p" data-i="from"><span class="pn">${esc(displayName(from))}</span>${icon("chevronRight", "chev")}</span>${from.name ? `<span class="addr">&lt;${esc(from.email)}&gt;</span>` : ""}${isVipPerson(from) ? vipBadge() : ""}${sentTag}</div>
-          ${people("To", d.to)}${people("Cc", d.cc)}${d.replyTo.length && d.replyTo[0].email !== d.from.email ? people("Reply-To", d.replyTo) : ""}${acctLine}
+          ${people("To", d.to)}${people("Cc", d.cc)}${people("Bcc", d.bcc || [])}${d.replyTo.length && d.replyTo[0].email !== d.from.email ? people("Reply-To", d.replyTo) : ""}${acctLine}
         </div>
         <div class="head-right">
           <div class="head-actions">
             ${!isPlain(d) ? `<button class="theme-switch small hd-light${adapted ? " on" : ""}" role="switch" aria-checked="${adapted}" title="Dark mode for this message"><span class="ts-icon ts-sun">${icon("sun")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span></button>` : ""}
-            <button class="mini-btn labeled" data-reply="reply" title="Reply">${icon("reply")}<span>Reply</span></button>
+            ${isDraft
+              ? `<button class="mini-btn labeled" data-reply="edit" title="Continue writing this draft">${icon("compose")}<span>Continue Editing</span></button>`
+              : `<button class="mini-btn labeled" data-reply="reply" title="Reply">${icon("reply")}<span>Reply</span></button>
             <button class="mini-btn labeled" data-reply="replyAll" title="Reply All">${icon("replyAll")}<span>Reply all</span></button>
-            <button class="mini-btn labeled" data-reply="forward" title="Forward">${icon("forward")}<span>Forward</span></button>
+            <button class="mini-btn labeled" data-reply="forward" title="Forward">${icon("forward")}<span>Forward</span></button>`}
           </div>
           <div class="when">${esc(longDate(d.date))}${multiConv ? icon("chevronRight", "cc-chev") : ""}</div>
         </div>
@@ -2001,6 +2004,7 @@ function cardElement(conv, id) {
   };
   el.addEventListener("mousedown", focus, true);
   el.querySelectorAll("[data-reply]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.reply === "edit") return openDraftById(d.id);
     if (d.local) return compose({ mode: b.dataset.reply, source: d });
     focus();
     reply(b.dataset.reply);
@@ -2608,8 +2612,26 @@ function reply(mode) {
   if (state.detail) compose({ mode, source: state.detail });
 }
 
+/** Toolbar "Edit Draft" / Enter: open the selected draft in the compose window. */
 function editDraft() {
-  if (state.detail) compose({ mode: "draft", source: state.detail });
+  if (state.selected.size === 1) openDraftById([...state.selected][0]);
+}
+
+/** Load a draft in full (not the quick partial preview) and continue it in the compose window. */
+let draftOpening = null;
+async function openDraftById(id) {
+  const m = msgById(id);
+  if (!m || draftOpening === id) return;
+  draftOpening = id;
+  try {
+    const d = await api.message(m.account, m.folder, m.uid, false, false);
+    d.id = m.id;
+    compose({ mode: "draft", source: d });
+  } catch (e) {
+    handleError(e);
+  } finally {
+    draftOpening = null;
+  }
 }
 
 function messageMenu() {

@@ -961,8 +961,10 @@ impl Imap {
             reply_to: mime::people(msg.reply_to()),
             to: mime::people(msg.to()),
             cc: mime::people(msg.cc()),
+            bcc: mime::people(msg.bcc()),
             subject: msg.subject().unwrap_or_default().to_string(),
             date: mime::date_ms(&msg).unwrap_or(0),
+            in_reply_to: Some(mime::thread_ids(&msg).1).filter(|s| !s.is_empty()),
             html,
             text,
             has_remote_content: remote,
@@ -1097,6 +1099,37 @@ impl Imap {
         Ok(())
     }
 
+    /// Append a message and return its new UID. The message is found among the UIDs the
+    /// folder hands out from UIDNEXT on (read just before the append), by comparing the
+    /// Message-ID headers directly; that doesn't depend on the server's search index having
+    /// caught up. Falls back to a Message-ID search.
+    pub async fn append_and_find(&self, folder: &str, flags: &str, content: Vec<u8>, message_id: &str) -> Result<Option<u32>> {
+        let (folder, flags) = (folder.to_string(), flags.to_string());
+        let mid = message_id.trim().trim_matches(|c| c == '<' || c == '>').to_string();
+        self.run(move |c| {
+            let (folder, flags, content, mid) = (folder.clone(), flags.clone(), content.clone(), mid.clone());
+            Box::pin(async move {
+                let next = c.select(&folder).await?.uid_next;
+                c.session.append(&folder, Some(&flags), None, &content).await?;
+                // Re-select so the session sees the new message.
+                c.select(&folder).await?;
+                if let Some(next) = next {
+                    let fetches: Vec<_> = c.session.uid_fetch(format!("{next}:*"), "(UID BODY.PEEK[HEADER])").await?.try_collect().await?;
+                    let found = fetches.iter().filter_map(|f| {
+                        let uid = f.uid.filter(|u| *u >= next)?;
+                        let h = mime::parse(f.header()?)?;
+                        (mime::thread_ids(&h).0 == mid).then_some(uid)
+                    }).max();
+                    if found.is_some() {
+                        return Ok(found);
+                    }
+                }
+                Ok(c.session.uid_search(format!("HEADER Message-ID {}", quote(&mid))).await?.into_iter().max())
+            })
+        })
+        .await
+    }
+
     pub async fn append(&self, folder: &str, flags: &str, content: Vec<u8>) -> Result<()> {
         let folder = folder.to_string();
         let flags = flags.to_string();
@@ -1220,8 +1253,7 @@ impl Imap {
         Ok(out)
     }
 
-    /// Find the UID of a message by Message-ID (used after saving drafts).
-/// Make sure the newest `limit` messages of a special folder (e.g. Sent) are in the local
+    /// Make sure the newest `limit` messages of a special folder (e.g. Sent) are in the local
     /// cache, so conversations can find your replies instantly without a slow server
     /// search. Runs on the background connection. Returns how many were fetched.
     pub async fn sync_recent(&self, role: &str, limit: usize) -> Result<usize> {
@@ -1290,19 +1322,6 @@ impl Imap {
         }
         let newest_first: Vec<MessageSummary> = uids.iter().filter_map(|u| have.remove(u)).collect();
         Ok(pick_sent_name(&newest_first, &self.cfg.email))
-    }
-
-    pub async fn find_by_message_id(&self, folder: &str, message_id: &str) -> Result<Option<u32>> {
-        let folder = folder.to_string();
-        let crit = format!("HEADER Message-ID {}", quote(message_id));
-        self.run(move |c| {
-            let (folder, crit) = (folder.clone(), crit.clone());
-            Box::pin(async move {
-                c.select(&folder).await?;
-                Ok(c.session.uid_search(&crit).await?.into_iter().max())
-            })
-        })
-        .await
     }
 
     pub async fn folder_op(&self, op: &str, path: &str, new_path: Option<&str>) -> Result<()> {

@@ -28,6 +28,7 @@ export const api = {
   send: (account, message) => call("send_message", { account, message }),
   saveDraft: (account, message) => call("save_draft", { account, message }),
   discardDraft: (account, uid) => call("discard_draft", { account, uid }),
+  stageMessageAttachments: (account, folder, uid) => call("stage_message_attachments", { account, folder, uid }),
   saveAttachment: (account, folder, uid, index) => call("save_attachment", { account, folder, uid, index }),
   openAttachment: (account, folder, uid, index) => call("open_attachment", { account, folder, uid, index }),
   rawSource: (account, folder, uid) => call("raw_source", { account, folder, uid }),

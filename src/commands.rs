@@ -617,12 +617,32 @@ pub async fn save_draft(state: State<'_, AppState>, account: Option<String>, mes
     let imap = rt.imap.clone();
     let (msg, mid) = smtp::build(&cfg.email, &cfg.sender_name.clone().unwrap_or_default(), &message, true, None).map_err(err)?;
     let drafts = sent_or_drafts(&imap, "drafts", "Drafts").await;
-    imap.append(&drafts, "(\\Seen \\Draft)", msg.formatted()).await.map_err(err)?;
-    if let Some(old) = message.draft_uid {
+    let uid = imap.append_and_find(&drafts, "(\\Seen \\Draft)", msg.formatted(), &mid).await.map_err(err)?;
+    if let Some(old) = message.draft_uid.filter(|old| Some(*old) != uid) {
         // Replace the older draft permanently rather than sending it to the trash.
         let _ = imap.purge(&drafts, &[old]).await;
     }
-    imap.find_by_message_id(&drafts, mid.trim_matches(|c| c == '<' || c == '>')).await.map_err(err)
+    if uid.is_none() {
+        // The next save can't replace this copy, so it would be left behind in Drafts.
+        crate::applog::log("draft", "saved, but its UID wasn't found");
+    }
+    Ok(uid)
+}
+
+/// Copy a message's attachments into the outgoing staging folder, so a resumed draft
+/// keeps them when it's saved again or sent.
+#[tauri::command]
+pub async fn stage_message_attachments(state: State<'_, AppState>, account: Option<String>, folder: String, uid: u32) -> CmdResult<Vec<PickedFile>> {
+    let folder = imap::real_folder(&folder);
+    let imap = state.imap(&account)?;
+    // Same list (and order) the UI shows; inline pictures stay in the body.
+    let listed = imap.get_message(&folder, uid, false, false).await.map_err(err)?.attachments;
+    let mut out = Vec::with_capacity(listed.len());
+    for a in listed {
+        let (_name, _mime, bytes) = imap.attachment(&folder, uid, a.index).await.map_err(err)?;
+        out.push(stage_bytes(&a.name, &bytes)?);
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -699,7 +719,12 @@ pub fn clean_staging() {
 pub async fn stage_attachment(request: tauri::ipc::Request<'_>) -> CmdResult<PickedFile> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("No file data.".into()) };
     let name = request.headers().get("x-name").and_then(|v| v.to_str().ok()).map(percent_decode).unwrap_or_default();
-    let name = safe_file_name(&name);
+    stage_bytes(&name, bytes)
+}
+
+/// Write one file into its own new folder under the staging dir.
+fn stage_bytes(name: &str, bytes: &[u8]) -> CmdResult<PickedFile> {
+    let name = safe_file_name(name);
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let dir = staging_dir().join(format!("{stamp:x}-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));

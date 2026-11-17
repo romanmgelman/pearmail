@@ -165,23 +165,28 @@ class TokenField {
  *         account: AccountInfo (the From), accounts: AccountInfo[], allowRemote: bool, onDone?: () => void }
  */
 export function openCompose(opts) {
+  const { mode = "new", source } = opts;
   if (current) {
+    // This draft is already open: just bring its window forward.
+    if (mode === "draft" && source && current.editing(source)) { current.restore(); return; }
     if (current.isDirty()) {
       current.restore();
       toast("Finish or close the message you're writing first.");
       return;
     }
+    // Its latest version is already in Drafts (autosaved); say so instead of leaving it silently.
+    if (current.hasDraft()) toast("Saved to Drafts.");
     current.close(false);
   }
-  const { mode = "new", source } = opts;
   avatarFn = opts.avatar || avatarFn;
   const accounts = opts.accounts?.length ? opts.accounts : [opts.account];
   let from = opts.account || accounts[0];
   // All of the user's own addresses (left out of Reply All).
   const mine = new Set(accounts.map((a) => a.email.toLowerCase()));
   const me = from.email.toLowerCase();
-  let to = opts.to || [], cc = [], subject = "", body = "<div><br></div>", inReplyTo = null, references = [];
+  let to = opts.to || [], cc = [], bcc = [], subject = "", body = "<div><br></div>", inReplyTo = null, references = [];
   let draftUid = null;
+  const openedDraft = mode === "draft" ? source?.uid : null;
   const sig = opts.signature?.trim() ? `<div><br></div><div class="pm-signature">${esc(opts.signature.trim()).split("\n").join("<br>")}</div>` : "";
   if (mode === "new") body = `<div><br></div>${sig}`;
 
@@ -215,10 +220,13 @@ export function openCompose(opts) {
   } else if (source && mode === "draft") {
     to = source.to.filter((p) => !(p.email.toLowerCase() === me && source.to.length === 1 && !source.subject));
     cc = source.cc;
+    bcc = source.bcc || [];
     subject = source.subject;
     body = stripForQuote(source.html, true);
     draftUid = source.uid;
-    references = source.references || [];
+    // Keep the reply's threading headers, so the sent message still joins its conversation.
+    inReplyTo = angle(source.inReplyTo);
+    references = (source.references || []).map(angle).filter(Boolean);
   }
 
   const root = document.getElementById("compose-root");
@@ -265,7 +273,7 @@ export function openCompose(opts) {
   const status = $(".status");
   const fTo = new TokenField($('[data-f="to"]'), to);
   const fCc = new TokenField($('[data-f="cc"]'), cc);
-  const fBcc = new TokenField($('[data-f="bcc"]'), []);
+  const fBcc = new TokenField($('[data-f="bcc"]'), bcc);
   const subjEl = $('[data-f="subject"]');
   // Switching the From account (only for new messages, replies and forwards).
   $(".from-select")?.addEventListener("change", (e) => {
@@ -273,8 +281,8 @@ export function openCompose(opts) {
     markDirty();
   });
   let attachments = [];
-  let dirty = false, sending = false, saving = null, closed = false;
-  if (cc.length) $('[data-f="cc"]').hidden = $('[data-f="bcc"]').hidden = false;
+  let dirty = false, sending = false, saving = null, closed = false, savedHere = false;
+  if (cc.length || bcc.length) $('[data-f="cc"]').hidden = $('[data-f="bcc"]').hidden = false;
 
   const markDirty = () => { dirty = true; status.textContent = ""; };
   [fTo, fCc, fBcc].forEach((f) => (f.onChange = markDirty));
@@ -307,14 +315,19 @@ export function openCompose(opts) {
   const needsSave = () => dirty && changed() && !isEmpty();
 
   async function saveDraft(quiet = true, reason = "autosave") {
-    if (saving || sending || closed && quiet) return;
+    if (saving) return saving; // one save at a time; callers can wait for it
+    if (sending || closed && quiet) return;
     status.textContent = "Saving…";
     saving = (async () => {
       try {
+        // Files still being copied in go into the draft too; saving without them would
+        // replace a draft that has its attachments with one that doesn't.
+        while (attachments.some((a) => a.staging)) await Promise.all(attachments.filter((a) => a.staging).map((a) => a.ready));
         const snap = snapshot();
         const uid = await api.saveDraft(from.id, message());
         api.logEvent("draft", `saved (${reason}, ${mode})`);
         draftUid = uid ?? null;
+        savedHere = true;
         saved = snap;
         dirty = false;
         status.textContent = "Draft saved";
@@ -329,6 +342,18 @@ export function openCompose(opts) {
     return saving;
   }
   const autosave = setInterval(() => { if (needsSave()) saveDraft(); }, 30000);
+
+  /** Delete this message's copy in Drafts, waiting for a save in progress so its copy goes too. */
+  async function discardSaved() {
+    if (saving) await saving.catch(() => {});
+    if (!draftUid) return;
+    const uid = draftUid;
+    draftUid = null;
+    try {
+      await api.discardDraft(from.id, uid);
+      opts.onDone?.("draft");
+    } catch {}
+  }
 
   async function send() {
     const all = [...fTo.values(), ...fCc.values(), ...fBcc.values()];
@@ -412,13 +437,34 @@ export function openCompose(opts) {
     el.classList.remove("minimized");
     applyPos();
     setButtons();
-    current = { el, close, isDirty: needsSave, restore: () => morph(() => el.classList.remove("minimized")) };
+    current = handle();
+  }
+
+  /** What the rest of the app can ask of the open window. */
+  function handle() {
+    return {
+      el, close,
+      isDirty: needsSave,
+      // Saved something to Drafts while open (not just a draft opened and left unchanged).
+      hasDraft: () => savedHere && !!draftUid,
+      // Is this window editing that draft (as opened, or its latest saved copy)?
+      editing: (s) => s.account === from.id && (s.uid === openedDraft || s.uid === draftUid),
+      restore: () => morph(() => el.classList.remove("minimized")),
+    };
   }
 
   function close(saveIfNeeded = true, reason = "close") {
     if (closed) return;
-    if (saveIfNeeded && needsSave()) {
-      saveDraft(false, reason).then(() => toast("Saved to Drafts."));
+    if (saveIfNeeded && (needsSave() || (saving && !isEmpty()))) {
+      // Wait for a save already under way, then save whatever changed after it started.
+      (async () => {
+        if (saving) await saving;
+        if (needsSave()) await saveDraft(false, reason);
+        if (draftUid) toast("Saved to Drafts.");
+      })();
+    } else if (saveIfNeeded && isEmpty()) {
+      // Everything was erased: don't leave an earlier autosaved copy behind in Drafts.
+      discardSaved();
     }
     closed = true;
     clearInterval(autosave);
@@ -443,9 +489,9 @@ export function openCompose(opts) {
       case "expand": morph(() => { el.classList.toggle("expanded"); el.classList.remove("minimized"); }); break;
       case "ccbcc": $('[data-f="cc"]').hidden = $('[data-f="bcc"]').hidden = false; fCc.input.focus(); break;
       case "discard": {
-        if (draftUid) api.discardDraft(from.id, draftUid).then(() => opts.onDone?.("draft")).catch(() => {});
         dirty = false;
         close(false);
+        discardSaved();
         break;
       }
       case "attach": {
@@ -610,7 +656,32 @@ export function openCompose(opts) {
   const onResize = () => { if (pos && el.isConnected) { pos = clampPos(pos); applyPos(); } };
   window.addEventListener("resize", onResize);
 
-  current = { el, close, isDirty: needsSave, restore: () => morph(() => el.classList.remove("minimized")) };
+  current = handle();
+
+  // A resumed draft brings its attachments: they're copied out of the saved draft and show
+  // as "loading" chips meanwhile (Send waits for them, like files dropped in).
+  if (mode === "draft" && source?.attachments?.length) {
+    const pending = source.attachments.map((a) => ({ name: a.name || "attachment", size: a.size || 0, staging: true }));
+    const ready = api.stageMessageAttachments(source.account, source.folder, source.uid).then(
+      (files) => {
+        pending.forEach((a, i) => (files[i] ? Object.assign(a, files[i], { staging: false }) : attachments.splice(attachments.indexOf(a), 1)));
+        renderAtts();
+        // Loading them isn't an edit; they're part of how the draft was saved.
+        if (!dirty) saved = snapshot();
+      },
+      (err) => {
+        pending.forEach((a) => attachments.splice(attachments.indexOf(a), 1));
+        renderAtts();
+        // Keep the original draft (with its attachments) instead of replacing it with a copy that lacks them.
+        draftUid = null;
+        toast(`Couldn't load this draft's attachments: ${errText(err)}. The original draft stays in Drafts.`, { error: true, duration: 8000 });
+      },
+    );
+    pending.forEach((a) => (a.ready = ready));
+    attachments.push(...pending);
+    renderAtts();
+  }
+
   // Baseline for "changed?" (again after a frame, once the editor has settled its HTML).
   saved = snapshot();
   requestAnimationFrame(() => { if (!dirty) saved = snapshot(); });

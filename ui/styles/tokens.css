@@ -4,6 +4,8 @@
   --vip-bright: #ffcc00;
   --vip-soft: #fadf9b; /* opaque: same shade on the list and on white cards */
   --vip-ink: #664a00;
+  --draft-soft: #ffd9b0; /* opaque orange: readable on the list and on white cards */
+  --draft-ink: #8a3b00;
   --reader-bg: #ebebef;
   --att-bg: #e9e9ed;
   --chip-bg: rgba(0, 0, 0, 0.06);
@@ -66,6 +68,8 @@
     --vip-bright: #ffd60a;
     --vip-soft: rgba(255, 214, 10, 0.16);
     --vip-ink: #ffd60a;
+    --draft-soft: rgba(255, 159, 10, 0.18);
+    --draft-ink: #ff9f0a;
     --badge-soft: rgba(10, 132, 255, 0.16);
     --badge-ink: #0a84ff;
     --reader-bg: #1e1e1e;
@@ -117,6 +121,8 @@
   --vip-bright: #ffd60a;
   --vip-soft: rgba(255, 214, 10, 0.16);
   --vip-ink: #ffd60a;
+  --draft-soft: rgba(255, 159, 10, 0.18);
+  --draft-ink: #ff9f0a;
     --badge-soft: rgba(10, 132, 255, 0.16);
     --badge-ink: #0a84ff;
     --reader-bg: #1e1e1e;

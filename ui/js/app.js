@@ -96,6 +96,7 @@ const trusted = () => store.get("trustedSenders", []);
 const isVipPerson = (p) => !!p?.email && vips().includes(p.email.toLowerCase());
 /** The little badge shown right after a VIP's name. */
 const vipBadge = () => `<span class="vip-badge" title="VIP">${icon("vip")}VIP</span>`;
+const draftBadge = () => `<span class="draft-badge" title="Draft: not sent yet">Draft</span>`;
 const remoteOkMessages = () => store.get("remoteOkMessages", []);
 
 /* ------------------------------------------------------------------ */
@@ -1852,7 +1853,8 @@ function renderConvHeader(conv) {
   const latest = cards[0].d || cards[0].m;
   const flagged = cards.some((c) => (c.d || c.m).flagged);
   const n = cards.length;
-  head.innerHTML = `<h1 class="msg-subject">${esc(latest.subject || "(No Subject)")}${flagged ? `<span class="flagmark">${icon("flagFill")}</span>` : ""}</h1>${n > 1 ? `<div class="conv-count">${n} messages</div>` : ""}`;
+  const draft = !latest.local && messageRole(latest) === "drafts";
+  head.innerHTML = `<h1 class="msg-subject">${draft ? draftBadge() : ""}${esc(latest.subject || "(No Subject)")}${flagged ? `<span class="flagmark">${icon("flagFill")}</span>` : ""}</h1>${n > 1 ? `<div class="conv-count">${n} messages</div>` : ""}`;
 }
 
 /**
@@ -1937,7 +1939,9 @@ function cardElement(conv, id) {
   const el = document.createElement("div");
   el.dataset.card = id;
   const m = c.m;
-  const sentTag = isMine(m.from) ? `<span class="sent-tag">Sent</span>` : "";
+  // A draft isn't received or sent mail: it gets the DRAFT badge (and "Continue Editing").
+  const isDraft = !m.local && messageRole(m) === "drafts";
+  const sentTag = isDraft ? draftBadge() : isMine(m.from) ? `<span class="sent-tag">Sent</span>` : "";
   if (!c.open || !c.d) {
     el.className = `conv-card msg-card collapsed${c.open ? " loading" : ""}${m.seen ? "" : " unread"} ${cardThemeClass(c.d || m)}`.trim();
     const tail = c.error
@@ -1968,8 +1972,6 @@ function cardElement(conv, id) {
   const people = (label, ps) =>
     ps.length ? `<div class="rcpts"><b>${label}:</b> ${ps.map((p, i) => `<span class="p" data-i="${label}${i}" title="${esc(p.email)}"><span class="pn">${esc(displayName(p))}</span>${icon("chevronRight", "chev")}</span>`).join("; ")}</div>` : "";
   const acct = acctById(d.account);
-  // A draft isn't received mail: it gets "Continue Editing" instead of Reply/Forward.
-  const isDraft = !d.local && messageRole(d) === "drafts";
   const acctLine = multi() && acct ? `<div class="rcpts acct-line"><span class="acct-dot" style="background:${acctColor(acct.id)}"></span>${esc(acct.email)}</div>` : "";
   el.innerHTML = `
       <div class="msg-head${multiConv ? " collapsible" : ""}"${multiConv ? ' title="Hide this message"' : ""}>

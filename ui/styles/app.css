@@ -867,6 +867,12 @@ body.dragging-reorder, body.dragging-reorder * { cursor: grabbing !important; us
 .cc-line1 .vip-badge { margin-left: -3px; }
 .msg-head .sender .vip-badge { margin-left: 6px; }
 
+/* ---- Drafts: an orange DRAFT pill, so a draft never passes for sent mail ---- */
+.draft-badge { display: inline-flex; align-items: center; flex: none; height: 16px; padding: 0 6px; border-radius: 5px; background: var(--draft-soft); color: var(--draft-ink); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1; vertical-align: 2px; white-space: nowrap; align-self: center; }
+.msg-subject .draft-badge { height: 20px; padding: 0 8px; margin-right: 10px; font-size: 12px; font-family: var(--font); vertical-align: 3px; }
+.msg-head .sender .draft-badge { margin-left: 8px; }
+.cc-line1 .draft-badge { margin-left: 6px; }
+
 /* Attachment viewer: PDFs, media, text */
 .viewer-stage img { opacity: 0; }
 .viewer-stage img.shown { opacity: 1; }

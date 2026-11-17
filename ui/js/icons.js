@@ -1,0 +1,78 @@
+// Hand-drawn line icons in the spirit of SF Symbols (24x24 grid, 1.6 stroke).
+const S = (body, fill = false) =>
+  `<svg viewBox="0 0 24 24" fill="${fill ? "currentColor" : "none"}" stroke="${fill ? "none" : "currentColor"}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+
+export const ICONS = {
+  inbox: S('<path d="M3.5 13.5 6 5.8A1.6 1.6 0 0 1 7.5 4.7h9a1.6 1.6 0 0 1 1.5 1.1l2.5 7.7v4.3a1.6 1.6 0 0 1-1.6 1.6H5.1a1.6 1.6 0 0 1-1.6-1.6z"/><path d="M3.6 13.5h4.6a.6.6 0 0 1 .6.5 3.2 3.2 0 0 0 6.4 0 .6.6 0 0 1 .6-.5h4.6"/>'),
+  vip: S('<path d="m12 3.6 2.55 5.2 5.7.82-4.12 4.03.97 5.67L12 16.64l-5.1 2.68.97-5.67L3.75 9.62l5.7-.82z"/>'),
+  flag: S('<path d="M5.5 21V4.3"/><path d="M5.5 4.6c2.2-1.2 4.4-1.2 6.5 0s4.3 1.2 6.5 0v9c-2.2 1.2-4.4 1.2-6.5 0s-4.3-1.2-6.5 0"/>'),
+  flagFill: S('<path d="M5.5 21V4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M5.5 4.6c2.2-1.2 4.4-1.2 6.5 0s4.3 1.2 6.5 0v9c-2.2 1.2-4.4 1.2-6.5 0s-4.3-1.2-6.5 0z"/>', true),
+  drafts: S('<path d="M14 3.5H7.2A1.7 1.7 0 0 0 5.5 5.2v13.6a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V8z"/><path d="M13.8 3.6V8.2h4.5"/><path d="M8.5 12.5h7M8.5 16h5"/>'),
+  sent: S('<path d="M20.6 3.4 10.4 13.6"/><path d="M20.6 3.4 14.2 20.6a.5.5 0 0 1-.93.04L10.4 13.6 3.36 10.73a.5.5 0 0 1 .04-.93z"/>'),
+  junk: S('<path d="M4.5 7h15"/><path d="M6 7l1 12.2A1.6 1.6 0 0 0 8.6 20.7h6.8a1.6 1.6 0 0 0 1.6-1.5L18 7"/><path d="M9.5 11.5l5 5M14.5 11.5l-5 5"/><path d="M9 7V4.8a.8.8 0 0 1 .8-.8h4.4a.8.8 0 0 1 .8.8V7"/>'),
+  trash: S('<path d="M4.5 6.8h15"/><path d="M9 6.8V4.9a.9.9 0 0 1 .9-.9h4.2a.9.9 0 0 1 .9.9v1.9"/><path d="M6.2 6.8 7 19.3a1.6 1.6 0 0 0 1.6 1.5h6.8a1.6 1.6 0 0 0 1.6-1.5l.8-12.5"/><path d="M10 10.5v6.5M14 10.5v6.5"/>'),
+  archive: S('<rect x="3.5" y="4.2" width="17" height="4.6" rx="1.2"/><path d="M5 8.8v9.5a1.7 1.7 0 0 0 1.7 1.7h10.6a1.7 1.7 0 0 0 1.7-1.7V8.8"/><path d="M10 12.3h4"/>'),
+  folder: S('<path d="M3.5 7.2V17.6a1.9 1.9 0 0 0 1.9 1.9h13.2a1.9 1.9 0 0 0 1.9-1.9V9.4a1.9 1.9 0 0 0-1.9-1.9h-6.8L9.9 5.3a1.6 1.6 0 0 0-1.2-.6H5.4a1.9 1.9 0 0 0-1.9 1.9z"/><path d="M3.6 10.2h16.8"/>'),
+  folderMove: S('<path d="M3.5 7.2V17.6a1.9 1.9 0 0 0 1.9 1.9h13.2a1.9 1.9 0 0 0 1.9-1.9V9.4a1.9 1.9 0 0 0-1.9-1.9h-6.8L9.9 5.3a1.6 1.6 0 0 0-1.2-.6H5.4a1.9 1.9 0 0 0-1.9 1.9z"/><path d="M9 14h6.2M13 11.6l2.4 2.4-2.4 2.4"/>'),
+  compose: S('<path d="M19.4 12.9v5.4a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2V6.8a2.2 2.2 0 0 1 2.2-2.2h5.6"/><path d="M17.6 3.2a1.8 1.8 0 0 1 2.6 2.6l-8.3 8.3-3.5.9.9-3.5z"/>'),
+  reply: S('<path d="M9.5 6 4 11.3l5.5 5.3"/><path d="M4.3 11.3h9.2c3.7 0 6.5 2.6 6.5 6.7"/>'),
+  replyAll: S('<path d="M11.5 6 6 11.3l5.5 5.3"/><path d="M7.5 6 2 11.3l5.5 5.3"/><path d="M6.3 11.3h8.2c3.7 0 6.5 2.6 6.5 6.7"/>'),
+  forward: S('<path d="M14.5 6 20 11.3l-5.5 5.3"/><path d="M19.7 11.3h-9.2C6.8 11.3 4 13.9 4 18"/>'),
+  filter: S('<circle cx="12" cy="12" r="8.6"/><path d="M7.6 9.4h8.8M9.2 12.3h5.6M10.8 15.2h2.4"/>'),
+  filterFill: S('<path fill-rule="evenodd" d="M12 2.6a9.4 9.4 0 1 1 0 18.8 9.4 9.4 0 0 1 0-18.8zM7.6 8.6a.8.8 0 0 0 0 1.6h8.8a.8.8 0 0 0 0-1.6zm1.6 2.9a.8.8 0 0 0 0 1.6h5.6a.8.8 0 0 0 0-1.6zm1.6 2.9a.8.8 0 0 0 0 1.6h2.4a.8.8 0 0 0 0-1.6z"/>', true),
+  search: S('<circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.2 15.2 5 5"/>'),
+  more: S('<circle cx="12" cy="12" r="8.6"/><circle cx="8" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="16" cy="12" r=".9" fill="currentColor"/>'),
+  sidebar: S('<rect x="3" y="4.5" width="18" height="15" rx="2.4"/><path d="M9.5 4.6v14.8"/><path d="M5.4 8h1.9M5.4 10.7h1.9M5.4 13.4h1.9"/>'),
+  envelope: S('<rect x="3" y="5.5" width="18" height="13" rx="2.2"/><path d="m3.6 6.8 7.3 5.9a1.8 1.8 0 0 0 2.2 0l7.3-5.9"/>'),
+  envelopeOpen: S('<path d="M3 10.2v8.1a2.2 2.2 0 0 0 2.2 2.2h13.6a2.2 2.2 0 0 0 2.2-2.2v-8.1"/><path d="M3 10.2 10.7 4a2 2 0 0 1 2.6 0L21 10.2"/><path d="m3.6 10.8 7.3 5a1.9 1.9 0 0 0 2.2 0l7.3-5"/>'),
+  envelopeBadge: S('<path d="M15.3 5.5H5.2A2.2 2.2 0 0 0 3 7.7v8.6a2.2 2.2 0 0 0 2.2 2.2h13.6a2.2 2.2 0 0 0 2.2-2.2V11"/><path d="m3.6 6.8 7.3 5.9a1.8 1.8 0 0 0 2.2 0l1.4-1.1"/><circle cx="19" cy="6" r="2.6" fill="currentColor" stroke="none"/>'),
+  paperclip: S('<path d="m19.2 11.4-7.1 7.1a4.6 4.6 0 0 1-6.5-6.5l7.6-7.6a3.1 3.1 0 0 1 4.3 4.3l-7.5 7.5a1.5 1.5 0 0 1-2.2-2.2l6.9-6.9"/>'),
+  chevronDown: S('<path d="m6 9 6 6 6-6"/>'),
+  grip: S('<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>', true),
+  chevronRight: S('<path d="m9 6 6 6-6 6"/>'),
+  plus: S('<path d="M12 5v14M5 12h14"/>'),
+  plusCircle: S('<circle cx="12" cy="12" r="8.6"/><path d="M12 8v8M8 12h8"/>'),
+  xmark: S('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
+  minimize: S('<path d="M6 12h12"/>'),
+  maximize: S('<rect x="5" y="5" width="14" height="14" rx="2.5"/>'),
+  expand: S('<path d="M14 4.5h5.5V10M10 19.5H4.5V14M19.3 4.7 13.5 10.5M4.7 19.3l5.8-5.8"/>'),
+  collapse: S('<path d="M19.5 10H14V4.5M4.5 14H10v5.5M14.2 9.8 20 4M9.8 14.2 4 20"/>'),
+  gear: S('<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.3M12 18.9v2.3M21.2 12h-2.3M5.1 12H2.8M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6M18.5 18.5l-1.6-1.6M7.1 7.1 5.5 5.5"/><circle cx="12" cy="12" r="6.6"/>'),
+  person: S('<circle cx="12" cy="8.3" r="3.8"/><path d="M4.5 20c.8-3.7 3.8-5.8 7.5-5.8s6.7 2.1 7.5 5.8"/>'),
+  check: S('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
+  arrowUp: S('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+  arrowRight: S('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+  refresh: S('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 4.5v4.4h-4.4"/>'),
+  download: S('<path d="M12 4v11M7.5 10.8 12 15.3l4.5-4.5"/><path d="M5 19.5h14"/>'),
+  photo: S('<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.6" cy="9.6" r="1.5"/><path d="m4 17 4.6-4.4 3.4 3 3-2.6L20 17.5"/>'),
+  print: S('<path d="M7 9V4h10v5"/><rect x="3.5" y="9" width="17" height="7.5" rx="1.8"/><path d="M7 14h10v6H7z"/>'),
+  doc: S('<path d="M14 3.5H7.2A1.7 1.7 0 0 0 5.5 5.2v13.6a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V8z"/><path d="M13.8 3.6V8.2h4.5"/>'),
+  listBullet: S('<circle cx="5" cy="7" r=".9" fill="currentColor"/><circle cx="5" cy="12" r=".9" fill="currentColor"/><circle cx="5" cy="17" r=".9" fill="currentColor"/><path d="M9 7h11M9 12h11M9 17h11"/>'),
+  listNumber: S('<path d="M10 7h10M10 12h10M10 17h10"/><path d="M4.2 5.6 5.4 5v4M4.2 9h2.4M4 14c.4-.6 1-.8 1.5-.6.7.3.7 1.1.1 1.7L4 16.7h2.6" stroke-width="1.2"/>'),
+  link: S('<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.2 1.2"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.2-1.2"/>'),
+  textFormat: S('<path d="M3.5 18 8 6l4.5 12M5.2 13.8h5.6"/><path d="M14.5 12.3c.5-1.1 1.6-1.7 2.9-1.7 1.8 0 2.9 1 2.9 2.8V18M20.3 15c-3.5-.3-5.6.3-5.6 1.7 0 .9.8 1.5 1.9 1.5 1.6 0 3.7-1 3.7-3.2"/>'),
+  signOut: S('<path d="M14 4.5H6.7A1.7 1.7 0 0 0 5 6.2v11.6a1.7 1.7 0 0 0 1.7 1.7H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/>'),
+  moon: S('<path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z"/>'),
+  sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2.8v2M12 19.2v2M21.2 12h-2M4.8 12h-2M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4M18.5 18.5l-1.4-1.4M6.9 6.9 5.5 5.5"/>'),
+  info: S('<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2"/><circle cx="12" cy="7.9" r=".9" fill="currentColor"/>'),
+  starFill: S('<path d="m12 3.6 2.55 5.2 5.7.82-4.12 4.03.97 5.67L12 16.64l-5.1 2.68.97-5.67L3.75 9.62l5.7-.82z"/>', true),
+  replied: S('<path d="M9.5 6 4 11.3l5.5 5.3"/><path d="M4.3 11.3h9.2c3.7 0 6.5 2.6 6.5 6.7"/>'),
+  // Solid pear with a bite out of its right side and a detached leaf.
+  pearSolid: `<svg viewBox="0 0 24 24" fill="currentColor"><defs><mask id="pm-bite"><rect width="24" height="24" fill="#fff"/><circle cx="18.6" cy="15.2" r="2.7" fill="#000"/></mask></defs><g mask="url(#pm-bite)"><path d="M12 7.9c-2.1 0-3.4 1.5-3.7 3.3-.2 1.2-.9 2-1.7 3.1-.7 1-1.1 2.1-1.1 3.2 0 3.1 2.9 5.5 6.5 5.5s6.5-2.4 6.5-5.5c0-1.1-.4-2.2-1.1-3.2-.8-1.1-1.5-1.9-1.7-3.1-.3-1.8-1.6-3.3-3.7-3.3z"/></g><path d="M11.5 8.3c-.1-1.6.3-3 1.1-4.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 5c1-1.9 3.1-2.8 5.2-2.3-.5 2-2.6 3.4-5.2 2.3z"/></svg>`,
+  pear: S('<path d="M12 7.2c-2.2 0-3.3 1.6-3.6 3.6-.2 1.3-1.9 2.3-2.4 4.4C5.3 18.2 8.3 21 12 21s6.7-2.8 6-5.8c-.5-2.1-2.2-3.1-2.4-4.4-.3-2-1.4-3.6-3.6-3.6z"/><path d="M12 7.2c0-1.4.3-2.6 1.2-3.7"/><path d="M13.2 4.6c1.4-.9 3-.8 4.1.1-1.3 1-2.8 1.1-4.1-.1z"/>'),
+};
+
+export function icon(name, cls = "") {
+  return `<span class="icon ${cls}" aria-hidden="true">${ICONS[name] || ""}</span>`;
+}
+
+export const ROLE_ICON = {
+  inbox: "inbox",
+  vip: "vip",
+  flagged: "flag",
+  drafts: "drafts",
+  sent: "sent",
+  junk: "junk",
+  trash: "trash",
+  archive: "archive",
+};

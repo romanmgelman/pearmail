@@ -1,0 +1,164 @@
+/* Design tokens modelled on iCloud Mail's web app (light + dark).
+   .card-light / .card-dark apply one set to a single message card, whatever the app uses. */
+:root, .card-light {
+  --vip-bright: #ffcc00;
+  --vip-soft: #fadf9b; /* opaque: same shade on the list and on white cards */
+  --vip-ink: #664a00;
+  --reader-bg: #ebebef;
+  --att-bg: #e9e9ed;
+  --chip-bg: rgba(0, 0, 0, 0.06);
+  --toast-bg: rgba(255, 255, 255, 0.94);
+  --toast-text: #1d1d1f;
+  --toast-link: #0071e3;
+  --toast-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 8px 26px rgba(0, 0, 0, 0.16);
+  --badge-soft: rgba(0, 113, 227, 0.16);
+  --badge-ink: #0058b0;
+  --splash-a: #ffffff;
+  --splash-b: #f2f2f7;
+  --splash-glow: rgba(0, 100, 255, 0.18);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+
+  --bg: #f6f6f8;
+  --bg-elevated: #ffffff;
+  --card-bg: #ffffff;
+  --sidebar-bg: #ebebef;
+  --toolbar-bg: rgba(246, 246, 248, 0.86);
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #86868b;
+  --text-on-accent: #ffffff;
+  --sep: rgba(0, 0, 0, 0.11);
+  --sep-strong: rgba(0, 0, 0, 0.23);
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --accent-soft: rgba(0, 113, 227, 0.1);
+  --sidebar-icon: #0071e3;
+  --sidebar-selected: rgba(0, 0, 0, 0.08);
+  --row-hover: rgba(0, 0, 0, 0.045);
+  --row-selected: #0071e3;
+  --row-selected-inactive: #e0e0e6;
+  --unread: #0071e3;
+  --flag: #ff9500;
+  --danger: #e30000;
+  --field-bg: rgba(0, 0, 0, 0.11);
+  --field-bg-focus: #ffffff;
+  --menu-bg: rgba(250, 250, 252, 0.96);
+  --menu-hover: #0071e3;
+  --shadow-menu: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 10px 32px rgba(0, 0, 0, 0.18);
+  --shadow-window: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 22px 70px rgba(0, 0, 0, 0.28);
+  --avatar-a: #a5abb5;
+  --avatar-b: #858a93;
+  --quote: #0071e3;
+  --scrollbar: rgba(0, 0, 0, 0.22);
+  --badge: #86868b;
+
+  --sidebar-w: 248px;
+  --list-w: 372px;
+  --toolbar-h: 52px;
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --vip-bright: #ffd60a;
+    --vip-soft: rgba(255, 214, 10, 0.16);
+    --vip-ink: #ffd60a;
+    --badge-soft: rgba(10, 132, 255, 0.16);
+    --badge-ink: #0a84ff;
+    --reader-bg: #1e1e1e;
+    --att-bg: #1e1e1e;
+    --chip-bg: rgba(255, 255, 255, 0.06);
+    --toast-bg: rgba(40, 40, 42, 0.94);
+    --toast-text: #fff;
+    --toast-link: #4da3ff;
+    --toast-shadow: 0 8px 26px rgba(0, 0, 0, 0.25);
+    --splash-a: #1c1c20;
+    --splash-b: #0f0f11;
+    --splash-glow: rgba(0, 100, 255, 0.28);
+    --bg: #1e1e1e;
+    --bg-elevated: #2a2a2c;
+    --card-bg: #2a2a2c;
+    --sidebar-bg: #262628;
+    --toolbar-bg: rgba(30, 30, 30, 0.86);
+    --text: #f5f5f7;
+    --text-2: #a1a1a6;
+    --text-3: #8e8e93;
+    --sep: rgba(255, 255, 255, 0.1);
+    --sep-strong: rgba(255, 255, 255, 0.16);
+    --accent: #0a84ff;
+    --accent-hover: #2b95ff;
+    --accent-soft: rgba(10, 132, 255, 0.16);
+    --sidebar-icon: #0a84ff;
+    --sidebar-selected: rgba(255, 255, 255, 0.1);
+    --row-hover: rgba(255, 255, 255, 0.04);
+    --row-selected: #0a84ff;
+    --row-selected-inactive: #3a3a3c;
+    --unread: #0a84ff;
+    --flag: #ff9f0a;
+    --danger: #ff453a;
+    --field-bg: rgba(255, 255, 255, 0.08);
+    --field-bg-focus: #1c1c1e;
+    --menu-bg: rgba(44, 44, 46, 0.97);
+    --menu-hover: #0a84ff;
+    --shadow-menu: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 32px rgba(0, 0, 0, 0.5);
+    --shadow-window: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 22px 70px rgba(0, 0, 0, 0.6);
+    --avatar-a: #7c818a;
+    --avatar-b: #5d6168;
+    --quote: #0a84ff;
+    --scrollbar: rgba(255, 255, 255, 0.25);
+    --badge: #8e8e93;
+  }
+}
+
+:root[data-theme="dark"], .card-dark {
+  --vip-bright: #ffd60a;
+  --vip-soft: rgba(255, 214, 10, 0.16);
+  --vip-ink: #ffd60a;
+    --badge-soft: rgba(10, 132, 255, 0.16);
+    --badge-ink: #0a84ff;
+    --reader-bg: #1e1e1e;
+    --att-bg: #1e1e1e;
+    --chip-bg: rgba(255, 255, 255, 0.06);
+    --toast-bg: rgba(40, 40, 42, 0.94);
+    --toast-text: #fff;
+    --toast-link: #4da3ff;
+    --toast-shadow: 0 8px 26px rgba(0, 0, 0, 0.25);
+  --splash-a: #1c1c20;
+  --splash-b: #0f0f11;
+  --splash-glow: rgba(0, 100, 255, 0.28);
+  --bg: #1e1e1e;
+  --bg-elevated: #2a2a2c;
+  --card-bg: #2a2a2c;
+  --sidebar-bg: #262628;
+  --toolbar-bg: rgba(30, 30, 30, 0.86);
+  --text: #f5f5f7;
+  --text-2: #a1a1a6;
+  --text-3: #8e8e93;
+  --sep: rgba(255, 255, 255, 0.1);
+  --sep-strong: rgba(255, 255, 255, 0.16);
+  --accent: #0a84ff;
+  --accent-hover: #2b95ff;
+  --accent-soft: rgba(10, 132, 255, 0.16);
+  --sidebar-icon: #0a84ff;
+  --sidebar-selected: rgba(255, 255, 255, 0.1);
+  --row-hover: rgba(255, 255, 255, 0.04);
+  --row-selected: #0a84ff;
+  --row-selected-inactive: #3a3a3c;
+  --unread: #0a84ff;
+  --flag: #ff9f0a;
+  --danger: #ff453a;
+  --field-bg: rgba(255, 255, 255, 0.08);
+  --field-bg-focus: #1c1c1e;
+  --menu-bg: rgba(44, 44, 46, 0.97);
+  --menu-hover: #0a84ff;
+  --shadow-menu: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 32px rgba(0, 0, 0, 0.5);
+  --shadow-window: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 22px 70px rgba(0, 0, 0, 0.6);
+  --avatar-a: #7c818a;
+  --avatar-b: #5d6168;
+  --quote: #0a84ff;
+  --scrollbar: rgba(255, 255, 255, 0.25);
+  --badge: #8e8e93;
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pear Mail</title>
+  <script src="js/theme-boot.js"></script>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+  <!-- Startup splash: shown until the first screen is ready, then fades into the app. -->
+  <div id="splash" aria-hidden="true"><img src="img/app-icon.png" alt=""></div>
+  <!-- First launch: add an account -->
+  <div class="signin" id="signin" hidden>
+    <img class="signin-icon" src="img/app-icon.png" alt="">
+    <div id="signin-host"></div>
+    <p class="signin-note">Passwords and sign-ins are stored securely in Windows Credential Manager.</p>
+  </div>
+
+  <!-- Main app -->
+  <div class="app" id="app" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <button class="tb-btn" id="btn-hide-sidebar" title="Hide Sidebar"></button>
+        <div class="app-title"><span class="brand-pear" id="brand-pear"></span><span>Mail</span></div>
+        <button class="theme-switch" id="btn-theme" role="switch" aria-checked="false" aria-label="Dark mode"></button>
+        <button class="tb-btn" id="btn-refresh" title="Refresh Mail (F5)"></button>
+      </div>
+      <div class="sidebar-scroll" id="sidebar-scroll"></div>
+      <div class="sidebar-foot">
+        <button class="account-btn" id="account-btn">
+          <div class="avatar small" id="acct-avatar"></div>
+          <div class="who"><div class="n" id="acct-name"></div><div class="e" id="acct-email"></div></div>
+          <span id="acct-gear"></span>
+        </button>
+      </div>
+    </aside>
+
+    <section class="list-pane" id="list-pane">
+      <div class="list-head">
+        <div class="list-toolbar">
+          <button class="tb-btn show-sidebar" id="btn-show-sidebar" title="Show Sidebar"></button>
+          <div class="title-block">
+            <div class="title" id="list-title">Inbox</div>
+            <div class="subtitle" id="list-subtitle"></div>
+          </div>
+          <button class="tb-btn" id="btn-filter" title="Filter/Sort"></button>
+          <button class="tb-btn" id="btn-compose" title="Compose New Message (Ctrl+N)"></button>
+        </div>
+        <div class="search" id="search-box">
+          <span id="search-icon"></span>
+          <input id="search" type="text" placeholder="Search" spellcheck="false">
+          <button class="clear" id="search-clear" hidden></button>
+        </div>
+        <div id="auth-banners" hidden></div>
+        <div class="filter-bar" id="filter-bar" hidden></div>
+      </div>
+      <div class="list-scroll" id="list" tabindex="0"></div>
+      <div class="resizer" id="list-resizer"></div>
+    </section>
+
+    <main class="reader" id="reader">
+      <div class="reader-toolbar" id="reader-toolbar"></div>
+      <div class="reader-scroll" id="reader-scroll"></div>
+    </main>
+  </div>
+
+  <div id="compose-root"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -2252,7 +2252,8 @@ body.pm-show-q .pm-q{display:revert !important;}
     lazyImages(frame, doc, d, fit);
     doc.addEventListener("click", (e) => {
       const img = e.target.closest("img[data-pm-part]");
-      if (img && img.dataset.pmZoom && viewablePart(d, +img.dataset.pmPart)) { openPreview(d, +img.dataset.pmPart, frame); return; }
+      const cur = frame._pmDetail || d;
+      if (img && img.dataset.pmZoom && viewablePart(cur, +img.dataset.pmPart)) { openPreview(cur, +img.dataset.pmPart, frame); return; }
       const a = e.target.closest("a[href]");
       if (!a) return;
       e.preventDefault();
@@ -2279,15 +2280,20 @@ function lazyImages(frame, doc, d, fit) {
   const partImgs = d.partial ? [] : [...doc.querySelectorAll("img[data-pm-part]")];
   // A zoom cursor (and a click that opens the viewer) for pictures worth enlarging:
   // not tiny ones like signature icons and social-media logos.
+  // The frame's clicks use the latest detail (a big email's full download replaces the partial one).
+  frame._pmDetail = d;
   doc.querySelectorAll("img[data-pm-part]").forEach((img) => {
     if (!viewablePart(d, +img.dataset.pmPart)) return;
+    const big = () => img.naturalWidth >= 48 || img.naturalHeight >= 48;
     const mark = () => {
-      if (img.naturalWidth < 48 && img.naturalHeight < 48) return;
+      if (!big()) return;
       img.dataset.pmZoom = "1";
       img.style.cursor = "zoom-in";
     };
-    if (img.complete && img.naturalWidth) mark();
-    else img.addEventListener("load", mark);
+    // Each picture starts as a 1×1 placeholder and the real one is swapped in later, so
+    // check again whenever it loads (not just now: the placeholder is "loaded" already).
+    img.addEventListener("load", mark);
+    if (img.complete && big()) mark();
   });
   const queue = [];
   let active = 0;

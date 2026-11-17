@@ -45,20 +45,15 @@ Passwords and sign-in tokens are stored only in **Windows Credential Manager** (
 | Provider | How to sign in |
 |---|---|
 | iCloud | Email + **app-specific password**: account.apple.com → Sign-In and Security → App-Specific Passwords. (Apple doesn't let third-party apps use Apple Account sign-in for mail.) |
-| Gmail | Email + **app password** (requires 2-Step Verification): myaccount.google.com/apppasswords. Or use **Sign in with Google** after a one-time Google Cloud setup (see below). |
+| Gmail | **Sign in with Google**: one click, then sign in in your browser. Or use an **app password** (requires 2-Step Verification): myaccount.google.com/apppasswords. |
 | Yahoo / AOL | Email + **app password** from the account's security page ("Generate app password"). |
-| Outlook.com / Hotmail / Live | **Sign in with Microsoft** in your browser. Microsoft no longer accepts passwords from mail apps. Needs a one-time app registration (see below). |
+| Outlook.com / Hotmail / Live / Microsoft 365 | **Sign in with Microsoft**: one click, then sign in in your browser. (Microsoft no longer accepts passwords from mail apps.) |
 | Other | Email + password. Server settings are found automatically through Mozilla's provider database; otherwise you enter them yourself. |
 
-### One-time setup for "Sign in with Microsoft"
-1. Go to portal.azure.com → **App registrations** → **New registration**. Name it "Pear Mail". Choose **Personal Microsoft accounts only** (or an option that includes personal accounts).
-2. Redirect URI: **Public client/native (mobile & desktop)**, value `http://localhost`. Register.
-3. Copy the **Application (client) ID** into Pear Mail. Pear Mail asks for it the first time you add an Outlook.com account; you can also change it later in Settings → Accounts.
+With **Sign in with Google** and **Sign in with Microsoft** there's nothing to set up: no app IDs, no passwords to copy. Pear Mail opens Google's or Microsoft's own sign-in page in your browser, reads your address from the sign-in, and never sees your password. It uses OAuth 2.0 with PKCE, and the resulting token is kept in Windows Credential Manager.
 
-### One-time setup for "Sign in with Google" (optional; app passwords also work)
-1. console.cloud.google.com → create a project. In **Google Auth Platform**, configure the consent screen (External) and add your Gmail address as a **test user**.
-2. **Clients → Create client → Desktop app**.
-3. Copy the **Client ID** and **Client secret** into Pear Mail.
+> [!NOTE]
+> Google is still reviewing Pear Mail, so Google shows an "unverified app" notice (choose **Advanced → Go to Pear Mail**), and Google sign-in is limited to approved testers for now. Everyone can use a Gmail **app password** in the meantime.
 
 Your existing single iCloud account from earlier versions is moved over automatically. You don't need to sign in again.
 
@@ -73,13 +68,15 @@ cargo test
 
 The frontend (`ui/`) is plain HTML, CSS and ES modules embedded into the binary at compile time, so no Node build step is needed.
 
+"Sign in with Google" needs a Google OAuth client (Desktop app), which isn't included in the source. To enable it in your own build, create an `oauth.local` file next to `Cargo.toml` (it's gitignored) with `PEARMAIL_GOOGLE_CLIENT_ID=…` and `PEARMAIL_GOOGLE_CLIENT_SECRET=…` lines, or set those environment variables. Without it, Gmail accounts can still use an app password. Sign in with Microsoft works out of the box.
+
 ## Features
 - **Contact photos.** Photos from your iCloud Contacts (synced over CardDAV with the same app-specific password, refreshed every 6 hours) appear as rounded squares in the message list and reading pane. Senders without a photo show their initials.
 - **Saved mail.** Messages are cached on disk in `%APPDATA%\PearMail\cache-<account>.sqlite`, so the app opens instantly and works offline. Only new mail is downloaded, and the 30 newest bodies are prefetched in the background. Signing out deletes the cache.
 - **Outlook-style reading.** HTML email keeps its original layout, wide newsletters scale to fit, and dark mode recolors emails to match (☀ shows the original). It also has colored sender avatars, Reply/Reply all/Forward on every message, Save all attachments, and zoom with Ctrl+= / Ctrl+- / Ctrl+wheel.
 - **Pictures from the web** load automatically. You can switch to "Trusted senders only" in Settings, then use "Always Load from Sender" per sender.
 - **Message list.** Messages are grouped by date (Today, Yesterday, This Week…), attachment names show in the list, and hovering a row shows read/flag/delete buttons. Sender pictures are optional.
-- **Undo** for delete, move and archive (Ctrl+Z or the Undo button, for 6 seconds).
+- **Undo** for delete, move and archive, several in a row: each Ctrl+Z (or Undo) takes back the latest one. Changes go to the server 6 seconds after your last action.
 - **New-mail notifications**, unread count in the window title, and the window size and position are remembered. Only one copy of the app can run at a time.
 - **Settings** (Ctrl+,) for theme, message dark mode, preview lines, text size, signature, notifications and more.
 - IMAP over TLS (`imap.mail.me.com:993`) and SMTP with STARTTLS (`smtp.mail.me.com:587`)

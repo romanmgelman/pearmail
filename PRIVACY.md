@@ -21,7 +21,7 @@ To work, Pear Mail keeps the following data **locally on your computer only**:
 | Data | Where it is stored | Purpose |
 |---|---|---|
 | Passwords, app-specific passwords and sign-in (OAuth) tokens | Windows Credential Manager, in entries named "Pear Mail" | Signing in to your mail accounts |
-| Account settings (email address, display name, server names and ports, OAuth client IDs you enter) | `%APPDATA%\PearMail\accounts.json` | Remembering your accounts |
+| Account settings (email address, display name, server names and ports) | `%APPDATA%\PearMail\accounts.json` | Remembering your accounts |
 | Cached mail (message headers, previews, and recently viewed or prefetched message bodies) | `%APPDATA%\PearMail\cache-<account>.sqlite` | Fast startup and offline reading |
 | Contact photos (iCloud accounts) | `%APPDATA%\PearMail\contact-photos-<account>.json` | Showing sender pictures |
 | App preferences (theme, layout, signature, trusted senders for images, and similar) | The app's local WebView storage | Remembering your settings |
@@ -35,7 +35,7 @@ Pear Mail connects directly from your computer to the following services. Your d
 
 - **Your email provider's mail servers** (for example iCloud, Gmail, Outlook.com, Yahoo, AOL, Fastmail, Zoho, GMX, or a server you configure) over encrypted IMAP and SMTP connections, to download, organize and send your mail.
 - **iCloud Contacts** (`contacts.icloud.com`), for iCloud accounts only, to download contact photos using the same app-specific password.
-- **Microsoft and Google sign-in services** (`login.microsoftonline.com`, `accounts.google.com`, `oauth2.googleapis.com`), only if you choose "Sign in with Microsoft" or "Sign in with Google". Sign-in happens in your web browser, and the app uses an OAuth client ID that you register and supply yourself.
+- **Microsoft and Google sign-in services** (`login.microsoftonline.com`, `accounts.google.com`, `oauth2.googleapis.com`), only if you choose "Sign in with Microsoft" or "Sign in with Google". Sign-in happens in your web browser on Microsoft's or Google's own page, so Pear Mail never sees your password. Pear Mail receives a sign-in token and your email address and name, which it uses only to connect to your mailbox.
 - **Mozilla's mail configuration database** (`autoconfig.thunderbird.net`) and the **autoconfiguration server of your email domain** (`autoconfig.<your domain>`), only when you add an account from a provider the app doesn't already know. These requests include your email domain, and the request to your own domain's server includes your email address, so the correct server settings can be found.
 - **Remote content inside emails.** Many emails contain images or other content hosted on the sender's servers. When Pear Mail loads that content, the sender's server can see your IP address and that the message was opened. By default, pictures from the web load automatically; you can change this in **Settings** to load them only from trusted senders.
 - **Links you click** open in your default web browser and are governed by that website's own practices.

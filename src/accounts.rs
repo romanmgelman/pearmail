@@ -4,7 +4,7 @@
 //! The single-account iCloud setup from earlier versions (`account.json` + the
 //! "PearMail iCloud" credential) is migrated automatically on first run.
 
-use crate::oauth::{OAuthApps, TokenSource};
+use crate::oauth::TokenSource;
 use crate::providers::{self, AuthKind, Server};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -46,8 +46,6 @@ pub struct AccountConfig {
 pub struct Store {
     #[serde(default)]
     pub accounts: Vec<AccountConfig>,
-    #[serde(default)]
-    pub oauth_apps: OAuthApps,
 }
 
 fn dir() -> Result<PathBuf> {
@@ -202,14 +200,13 @@ impl Credentials {
         }
     }
 
-    pub fn for_account(cfg: &AccountConfig, secret: String, apps: &OAuthApps) -> Credentials {
+    pub fn for_account(cfg: &AccountConfig, secret: String) -> Credentials {
         let secret = match cfg.auth {
             AuthKind::Password => Secret::Password(secret),
             kind => {
                 let id = cfg.id.clone();
                 Secret::OAuth(Arc::new(TokenSource::new(
                     kind,
-                    apps.clone(),
                     secret,
                     Box::new(move |rt| {
                         let _ = set_secret(&id, rt);
@@ -292,7 +289,7 @@ mod tests {
     #[test]
     fn store_roundtrip() {
         let p = providers::by_provider("gmail").unwrap();
-        let s = Store { accounts: vec![from_preset("x@gmail.com", "X", &p, AuthKind::Google)], oauth_apps: OAuthApps::default() };
+        let s = Store { accounts: vec![from_preset("x@gmail.com", "X", &p, AuthKind::Google)] };
         let json = serde_json::to_string(&s).unwrap();
         let back: Store = serde_json::from_str(&json).unwrap();
         assert_eq!(back.accounts, s.accounts);

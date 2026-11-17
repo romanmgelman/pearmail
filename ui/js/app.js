@@ -3020,8 +3020,6 @@ async function openSettings() {
     `<div class="seg">${opts.map(([v, l]) => `<label class="${String(cur) === String(v) ? "on" : ""}"><input type="radio" name="${name}" value="${v}" ${String(cur) === String(v) ? "checked" : ""}>${l}</label>`).join("")}</div>`;
   const toggle = (name, label, cur, hint = "") =>
     `<label class="toggle-row"><span><span class="tl">${label}</span>${hint ? `<span class="th">${hint}</span>` : ""}</span><input type="checkbox" name="${name}" ${cur ? "checked" : ""}><span class="switch"></span></label>`;
-  let apps = { microsoftClientId: "", googleClientId: "", googleClientSecret: "" };
-  try { apps = await api.getOAuthApps(); } catch {}
   const back = document.createElement("div");
   back.className = "modal-back settings-back"; // opens with a rise, like the compose window
   back.innerHTML = `<div class="modal settings">
@@ -3029,12 +3027,6 @@ async function openSettings() {
     <div class="set-sec">Accounts</div>
     <div class="acct-list">${accountsSettingsHtml()}</div>
     <div class="set-row"><span></span><button class="btn" data-act="add-account">Add Account…</button></div>
-    <details class="set-adv"><summary>Browser sign-in app IDs (Outlook.com, Google)</summary>
-      <p class="th">Needed only for accounts that sign in through the browser. See the steps in Add Account → Outlook.com or Gmail.</p>
-      <div class="set-row"><span>Microsoft client ID</span><input type="text" name="msId" value="${esc(apps.microsoftClientId)}" spellcheck="false"></div>
-      <div class="set-row"><span>Google client ID</span><input type="text" name="gId" value="${esc(apps.googleClientId)}" spellcheck="false"></div>
-      <div class="set-row"><span>Google client secret</span><input type="text" name="gSecret" value="${esc(apps.googleClientSecret)}" spellcheck="false"></div>
-    </details>
     <div class="set-sec">Appearance</div>
     ${toggle("themeAuto", "Automatic", settings.theme === "system", "Follow the Windows light/dark setting.")}
     ${toggle("themeDark", "Dark Mode", darkActive())}
@@ -3079,13 +3071,6 @@ async function openSettings() {
         try { await api.setSenderName(a.id, sender); a.senderName = sender; } catch (e) { handleError(e); }
       }
     }
-    // Browser sign-in app IDs.
-    const next = {
-      microsoftClientId: back.querySelector('[name="msId"]').value.trim(),
-      googleClientId: back.querySelector('[name="gId"]').value.trim(),
-      googleClientSecret: back.querySelector('[name="gSecret"]').value.trim(),
-    };
-    if (JSON.stringify(next) !== JSON.stringify(apps)) { try { await api.setOAuthApps(next); apps = next; } catch (e) { handleError(e); } }
     paintAccount();
     renderSidebar();
   };

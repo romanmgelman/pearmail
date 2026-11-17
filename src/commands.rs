@@ -7,7 +7,7 @@ use crate::accounts::{self, AccountConfig, Credentials, Secret};
 use crate::cache::Cache;
 use crate::imap::{self, Imap};
 use crate::model::*;
-use crate::oauth::{self, OAuthApps};
+use crate::oauth;
 use crate::providers::{self, AuthKind, Preset, Server};
 use crate::smtp;
 use std::collections::{HashMap, VecDeque};
@@ -192,7 +192,7 @@ pub async fn restore_session(app: AppHandle, state: State<'_, AppState>) -> CmdR
             continue;
         }
         let Some(secret) = accounts::get_secret(&cfg.id) else { continue };
-        let creds = Credentials::for_account(&cfg, secret, &store.oauth_apps);
+        let creds = Credentials::for_account(&cfg, secret);
         state.start(&app, cfg, creds)?;
     }
     Ok(state.infos())
@@ -209,26 +209,15 @@ pub async fn detect_provider(email: String) -> CmdResult<Option<Preset>> {
     Ok(providers::detect(&accounts::normalize_email(&email)).await)
 }
 
-#[tauri::command]
-pub async fn get_oauth_apps() -> CmdResult<OAuthApps> {
-    Ok(accounts::load().oauth_apps)
-}
-
-#[tauri::command]
-pub async fn set_oauth_apps(apps: OAuthApps) -> CmdResult<()> {
-    let mut store = accounts::load();
-    store.oauth_apps = apps;
-    accounts::save(&store).map_err(err)
-}
-
-/// Add an account. Password accounts are verified by logging in; OAuth accounts open the
-/// browser sign-in first. `imap`/`smtp` override auto-detected servers ("Other" provider).
+/// Add an account. Password accounts are verified by logging in. Google / Microsoft
+/// accounts sign in in the browser first, and the address comes from that sign-in (no
+/// email needed). `imap`/`smtp` override auto-detected servers ("Other" provider).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn add_account(
     app: AppHandle,
     state: State<'_, AppState>,
-    email: String,
+    email: Option<String>,
     password: Option<String>,
     name: Option<String>,
     sender_name: Option<String>,
@@ -236,11 +225,26 @@ pub async fn add_account(
     imap: Option<Server>,
     smtp: Option<Server>,
 ) -> CmdResult<AccountInfo> {
-    let email = accounts::normalize_email(&email);
+    let kind_asked = auth.unwrap_or(AuthKind::Password);
+    // Browser sign-in: sign in first, to learn who signed in.
+    let signed = if kind_asked != AuthKind::Password { Some(browser_sign_in(&app, kind_asked, None).await?) } else { None };
+    let email = match &signed {
+        Some(s) => s.email.clone(),
+        None => accounts::normalize_email(&email.unwrap_or_default()),
+    };
+    if email.is_empty() {
+        return Err("Enter your email address.".into());
+    }
     let mut store = accounts::load();
     if store.accounts.iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
         return Err(format!("{email} is already added."));
     }
+    // Google Workspace / Microsoft 365 addresses on their own domains use Gmail's / Outlook's servers.
+    let fallback = || match kind_asked {
+        AuthKind::Google => providers::by_provider("gmail"),
+        AuthKind::Microsoft => providers::by_provider("outlook"),
+        AuthKind::Password => None,
+    };
     let preset = match (imap, smtp) {
         (Some(i), Some(s)) => Preset {
             provider: "other".into(),
@@ -251,7 +255,10 @@ pub async fn add_account(
             app_password_url: None,
             saves_sent: false,
         },
-        _ => providers::detect(&email).await.ok_or_else(|| "MANUAL: Enter the mail server settings for this account.".to_string())?,
+        _ => match providers::detect(&email).await.filter(|p| kind_asked == AuthKind::Password || p.auth.contains(&kind_asked)).or_else(fallback) {
+            Some(p) => p,
+            None => return Err("MANUAL: Enter the mail server settings for this account.".to_string()),
+        },
     };
     let kind = auth.unwrap_or(preset.auth[0]);
     let label = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| accounts::provider_label(&preset.provider, &email));
@@ -260,9 +267,14 @@ pub async fn add_account(
     if let Some(s) = sender_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         cfg.sender_name = Some(s);
         cfg.sender_set_by_user = true;
+    } else if let Some(n) = signed.as_ref().map(|s| s.name.clone()).filter(|n| !n.is_empty()) {
+        cfg.sender_name = Some(n); // from the sign-in; Sent mail can still refine it
     }
 
-    let (secret, creds) = sign_in_creds(&app, &cfg, password, &store.oauth_apps).await?;
+    let (secret, creds) = match signed {
+        Some(s) => oauth_creds(&cfg, s),
+        None => sign_in_creds(&app, &cfg, password).await?,
+    };
     // Verify the login before saving anything.
     verify_login(&cfg, &creds).await?;
 
@@ -283,27 +295,40 @@ pub(crate) fn clean_password(pw: Option<String>) -> Result<String, String> {
     Ok(pw)
 }
 
+/// Browser sign-in with Google / Microsoft (opens the system browser).
+async fn browser_sign_in(app: &AppHandle, kind: AuthKind, login_hint: Option<&str>) -> CmdResult<oauth::SignInResult> {
+    let app2 = app.clone();
+    oauth::sign_in(kind, login_hint, move |url| {
+        use tauri_plugin_opener::OpenerExt;
+        app2.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!("{e}"))
+    })
+    .await
+    .map_err(err)
+}
+
+/// Runtime credentials from a browser sign-in. Returns (secret to store, credentials).
+fn oauth_creds(cfg: &AccountConfig, signed: oauth::SignInResult) -> (String, Credentials) {
+    let creds = Credentials::for_account(cfg, signed.refresh_token.clone());
+    if let Secret::OAuth(ts) = &creds.secret {
+        ts.seed(signed.access_token, signed.expires_in);
+    }
+    (signed.refresh_token, creds)
+}
+
 /// Obtain credentials for an account: the given app password, or a fresh browser sign-in
-/// for Microsoft / Google accounts. Returns (secret to store, runtime credentials).
-async fn sign_in_creds(app: &AppHandle, cfg: &AccountConfig, password: Option<String>, apps: &OAuthApps) -> CmdResult<(String, Credentials)> {
+/// (as this account) for Microsoft / Google accounts. Returns (secret to store, credentials).
+async fn sign_in_creds(app: &AppHandle, cfg: &AccountConfig, password: Option<String>) -> CmdResult<(String, Credentials)> {
     match cfg.auth {
         AuthKind::Password => {
             let pw = clean_password(password)?;
             Ok((pw.clone(), Credentials { email: cfg.email.clone(), secret: Secret::Password(pw) }))
         }
         kind => {
-            let app2 = app.clone();
-            let signed = oauth::sign_in(kind, apps, &cfg.email, move |url| {
-                use tauri_plugin_opener::OpenerExt;
-                app2.opener().open_url(url, None::<&str>).map_err(|e| anyhow::anyhow!("{e}"))
-            })
-            .await
-            .map_err(err)?;
-            let creds = Credentials::for_account(cfg, signed.refresh_token.clone(), apps);
-            if let Secret::OAuth(ts) = &creds.secret {
-                ts.seed(signed.access_token, signed.expires_in);
+            let signed = browser_sign_in(app, kind, Some(&cfg.email)).await?;
+            if !signed.email.eq_ignore_ascii_case(&cfg.email) {
+                return Err(format!("You signed in as {}, but this account is {}. Sign in as {} instead.", signed.email, cfg.email, cfg.email));
             }
-            Ok((signed.refresh_token, creds))
+            Ok(oauth_creds(cfg, signed))
         }
     }
 }
@@ -322,7 +347,7 @@ async fn verify_login(cfg: &AccountConfig, creds: &Credentials) -> CmdResult<()>
 pub async fn reauth_account(app: AppHandle, state: State<'_, AppState>, account: String, password: Option<String>) -> CmdResult<AccountInfo> {
     let store = accounts::load();
     let cfg = store.accounts.iter().find(|a| a.id == account).cloned().ok_or("That account is no longer available.")?;
-    let (secret, creds) = sign_in_creds(&app, &cfg, password, &store.oauth_apps).await?;
+    let (secret, creds) = sign_in_creds(&app, &cfg, password).await?;
     verify_login(&cfg, &creds).await?;
     accounts::set_secret(&cfg.id, &secret).map_err(err)?;
     let rt = state.start(&app, cfg, creds)?;

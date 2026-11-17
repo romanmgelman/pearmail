@@ -198,8 +198,6 @@ It should show the Pear Mail name and icon.", || {});
             commands::remove_account,
             commands::reauth_account,
             commands::detect_provider,
-            commands::get_oauth_apps,
-            commands::set_oauth_apps,
             commands::list_folders,
             commands::list_messages,
             commands::get_message,
@@ -353,6 +351,6 @@ fn first_account() -> Option<(accounts::AccountConfig, accounts::Credentials)> {
     let store = accounts::load();
     let cfg = store.accounts.first()?.clone();
     let secret = accounts::get_secret(&cfg.id)?;
-    let creds = accounts::Credentials::for_account(&cfg, secret, &store.oauth_apps);
+    let creds = accounts::Credentials::for_account(&cfg, secret);
     Some((cfg, creds))
 }

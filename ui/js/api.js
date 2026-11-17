@@ -13,8 +13,6 @@ export const api = {
   removeAccount: (account) => call("remove_account", { account }),
   reauthAccount: (account, password = null) => call("reauth_account", { account, password }),
   detectProvider: (email) => call("detect_provider", { email }),
-  getOAuthApps: () => call("get_oauth_apps"),
-  setOAuthApps: (apps) => call("set_oauth_apps", { apps }),
   signOut: () => call("sign_out"),
   setDisplayName: (account, name) => call("set_display_name", { account, name }),
   reorderAccounts: (order) => call("reorder_accounts", { order }),

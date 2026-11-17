@@ -1,29 +1,24 @@
 //! Browser sign-in (OAuth 2.0 authorization code + PKCE, loopback redirect) for
 //! Microsoft (Outlook.com / Hotmail) and Google (Gmail), plus token refresh.
 //!
-//! App registration IDs are supplied by the user (Settings → Accounts), because
-//! Microsoft and Google tie them to the person who registers the app.
+//! Pear Mail's own app registrations are built in, so signing in is just a click.
 
 use crate::providers::AuthKind;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::Digest;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// User-registered OAuth app IDs.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OAuthApps {
-    #[serde(default)]
-    pub microsoft_client_id: String,
-    #[serde(default)]
-    pub google_client_id: String,
-    /// Google issues a "secret" for desktop apps too (it isn't confidential).
-    #[serde(default)]
-    pub google_client_secret: String,
-}
+/// Pear Mail's app registration with Microsoft (Entra ID; personal and work accounts).
+const MICROSOFT_CLIENT_ID: &str = "a9cbfa8c-ca3e-40b9-9063-fe7c495632f9";
+/// Pear Mail's Google "Desktop app" client, compiled in from `oauth.local` (or the
+/// environment) by build.rs, so it isn't in the public source. Google issues a "secret"
+/// for desktop apps too; it isn't confidential (PKCE protects the sign-in), but the token
+/// endpoint requires it.
+const GOOGLE_CLIENT_ID: &str = match option_env!("PEARMAIL_GOOGLE_CLIENT_ID") { Some(v) => v, None => "" };
+const GOOGLE_CLIENT_SECRET: &str = match option_env!("PEARMAIL_GOOGLE_CLIENT_SECRET") { Some(v) => v, None => "" };
 
 struct Endpoints {
     authorize: &'static str,
@@ -36,27 +31,39 @@ fn endpoints(kind: AuthKind) -> Result<Endpoints> {
         AuthKind::Microsoft => Endpoints {
             authorize: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
             token: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-            scope: "offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send",
+            scope: "openid email profile offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send",
         },
         AuthKind::Google => Endpoints {
             authorize: "https://accounts.google.com/o/oauth2/v2/auth",
             token: "https://oauth2.googleapis.com/token",
-            scope: "https://mail.google.com/",
+            scope: "openid email profile https://mail.google.com/",
         },
         AuthKind::Password => bail!("not an OAuth provider"),
     })
 }
 
-fn client_id(kind: AuthKind, apps: &OAuthApps) -> Result<String> {
-    let id = match kind {
-        AuthKind::Microsoft => apps.microsoft_client_id.trim(),
-        AuthKind::Google => apps.google_client_id.trim(),
-        AuthKind::Password => "",
+fn client_id(kind: AuthKind) -> Result<&'static str> {
+    let ready = match kind {
+        AuthKind::Microsoft => !MICROSOFT_CLIENT_ID.is_empty(),
+        AuthKind::Google => !GOOGLE_CLIENT_ID.is_empty() && !GOOGLE_CLIENT_SECRET.is_empty(),
+        AuthKind::Password => bail!("not an OAuth provider"),
     };
-    if id.is_empty() {
-        bail!("SETUP: Add your {} app ID in Settings → Accounts first.", if kind == AuthKind::Microsoft { "Microsoft" } else { "Google" });
+    if !ready {
+        bail!("Sign in with {} isn't set up in this build yet.", if kind == AuthKind::Microsoft { "Microsoft" } else { "Google" });
     }
-    Ok(id.to_string())
+    Ok(if kind == AuthKind::Microsoft { MICROSOFT_CLIENT_ID } else { GOOGLE_CLIENT_ID })
+}
+
+/// Who signed in: the email address and name from the ID token's payload. (No signature
+/// check needed: the token came straight from the provider's token endpoint over TLS.)
+fn id_token_identity(id_token: &str) -> Option<(String, String)> {
+    let payload = id_token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string);
+    // Microsoft personal accounts may omit "email"; "preferred_username" is the address.
+    let email = s("email").or_else(|| s("preferred_username").filter(|u| u.contains('@')))?;
+    Some((email.to_lowercase(), s("name").unwrap_or_default()))
 }
 
 fn random_url_safe(bytes: usize) -> String {
@@ -115,16 +122,17 @@ struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
     expires_in: Option<u64>,
+    id_token: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
 }
 
-async fn token_request(kind: AuthKind, apps: &OAuthApps, form: Vec<(&str, String)>) -> Result<TokenResponse> {
+async fn token_request(kind: AuthKind, form: Vec<(&str, String)>) -> Result<TokenResponse> {
     let ep = endpoints(kind)?;
     let mut form = form;
-    form.push(("client_id", client_id(kind, apps)?));
-    if kind == AuthKind::Google && !apps.google_client_secret.trim().is_empty() {
-        form.push(("client_secret", apps.google_client_secret.trim().to_string()));
+    form.push(("client_id", client_id(kind)?.to_string()));
+    if kind == AuthKind::Google {
+        form.push(("client_secret", GOOGLE_CLIENT_SECRET.to_string()));
     }
     let body = form.iter().map(|(k, v)| format!("{}={}", k, enc(v))).collect::<Vec<_>>().join("&");
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
@@ -146,13 +154,17 @@ pub struct SignInResult {
     pub refresh_token: String,
     pub access_token: String,
     pub expires_in: u64,
+    /// The signed-in address and name (from the ID token).
+    pub email: String,
+    pub name: String,
 }
 
 /// Run the browser sign-in. `open` opens a URL in the system browser.
 /// Waits (up to 5 minutes) for the browser to come back to the loopback address.
-pub async fn sign_in(kind: AuthKind, apps: &OAuthApps, email: &str, open: impl Fn(&str) -> Result<()>) -> Result<SignInResult> {
+/// `login_hint`: the address to sign in as (re-sign-in), if known.
+pub async fn sign_in(kind: AuthKind, login_hint: Option<&str>, open: impl Fn(&str) -> Result<()>) -> Result<SignInResult> {
     let ep = endpoints(kind)?;
-    let id = client_id(kind, apps)?;
+    let id = client_id(kind)?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     // Microsoft and Google both accept any port for a registered loopback redirect.
@@ -160,15 +172,17 @@ pub async fn sign_in(kind: AuthKind, apps: &OAuthApps, email: &str, open: impl F
     let verifier = random_url_safe(48);
     let state = random_url_safe(16);
     let mut url = format!(
-        "{}?client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}&login_hint={}",
+        "{}?client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
         ep.authorize,
-        enc(&id),
+        enc(id),
         enc(&redirect),
         enc(ep.scope),
         pkce_challenge(&verifier),
         state,
-        enc(email)
     );
+    if let Some(h) = login_hint.filter(|h| !h.is_empty()) {
+        url.push_str(&format!("&login_hint={}", enc(h)));
+    }
     if kind == AuthKind::Google {
         url.push_str("&access_type=offline&prompt=consent");
     } else {
@@ -216,7 +230,6 @@ pub async fn sign_in(kind: AuthKind, apps: &OAuthApps, email: &str, open: impl F
 
     let t = token_request(
         kind,
-        apps,
         vec![
             ("grant_type", "authorization_code".into()),
             ("code", code),
@@ -226,7 +239,10 @@ pub async fn sign_in(kind: AuthKind, apps: &OAuthApps, email: &str, open: impl F
         ],
     )
     .await?;
+    let (email, name) = t.id_token.as_deref().and_then(id_token_identity).context("The sign-in server didn't say which account signed in")?;
     Ok(SignInResult {
+        email,
+        name,
         refresh_token: t.refresh_token.context("The sign-in server didn't return a refresh token")?,
         access_token: t.access_token.context("No access token")?,
         expires_in: t.expires_in.unwrap_or(3600),
@@ -236,7 +252,6 @@ pub async fn sign_in(kind: AuthKind, apps: &OAuthApps, email: &str, open: impl F
 /// Hands out fresh access tokens for one account, refreshing when needed.
 pub struct TokenSource {
     pub kind: AuthKind,
-    apps: OAuthApps,
     refresh_token: std::sync::Mutex<String>,
     cached: tokio::sync::Mutex<Option<(String, Instant)>>,
     /// Called when the provider rotates the refresh token (so it can be persisted).
@@ -244,8 +259,8 @@ pub struct TokenSource {
 }
 
 impl TokenSource {
-    pub fn new(kind: AuthKind, apps: OAuthApps, refresh_token: String, on_rotate: Box<dyn Fn(&str) + Send + Sync>) -> Self {
-        TokenSource { kind, apps, refresh_token: std::sync::Mutex::new(refresh_token), cached: Default::default(), on_rotate }
+    pub fn new(kind: AuthKind, refresh_token: String, on_rotate: Box<dyn Fn(&str) + Send + Sync>) -> Self {
+        TokenSource { kind, refresh_token: std::sync::Mutex::new(refresh_token), cached: Default::default(), on_rotate }
     }
 
     pub fn seed(&self, access_token: String, expires_in: u64) {
@@ -263,7 +278,7 @@ impl TokenSource {
         }
         let rt = self.refresh_token.lock().unwrap().clone();
         let ep = endpoints(self.kind)?;
-        let t = token_request(self.kind, &self.apps, vec![("grant_type", "refresh_token".into()), ("refresh_token", rt), ("scope", ep.scope.into())])
+        let t = token_request(self.kind, vec![("grant_type", "refresh_token".into()), ("refresh_token", rt), ("scope", ep.scope.into())])
             .await
             .map_err(|e| anyhow!("AUTH: {e:#}. Sign in to this account again."))?;
         if let Some(new_rt) = &t.refresh_token {
@@ -327,8 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn requires_app_id() {
-        let e = client_id(AuthKind::Microsoft, &OAuthApps::default()).unwrap_err().to_string();
-        assert!(e.starts_with("SETUP:"));
+    fn identity_from_id_token() {
+        let b = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+        let tok = |claims: &str| format!("{}.{}.sig", b(r#"{"alg":"RS256"}"#), b(claims));
+        assert_eq!(id_token_identity(&tok(r#"{"email":"Jane@Gmail.com","name":"Jane Doe"}"#)), Some(("jane@gmail.com".into(), "Jane Doe".into())));
+        // Microsoft personal accounts: no "email", the address is the preferred_username.
+        assert_eq!(id_token_identity(&tok(r#"{"preferred_username":"joe@outlook.com"}"#)), Some(("joe@outlook.com".into(), String::new())));
+        assert_eq!(id_token_identity(&tok(r#"{"preferred_username":"not-an-address"}"#)), None);
+        assert_eq!(id_token_identity("garbage"), None);
     }
 }

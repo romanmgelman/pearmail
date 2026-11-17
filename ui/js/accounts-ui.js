@@ -1,5 +1,5 @@
-// "Add Account" flow: provider tiles → app-password form, browser sign-in (Microsoft /
-// Google), or manual server settings. Rendered into any container (first-launch screen
+// "Add Account" flow: provider tiles → one-click browser sign-in (Google / Microsoft),
+// app-password form, or manual server settings. Rendered into any container (first-launch screen
 // or a modal).
 import { api, esc, errText, openUrl } from "./api.js";
 import { icon } from "./icons.js";
@@ -20,20 +20,6 @@ const APP_PASSWORD_HELP = {
   aol: { url: "https://login.aol.com/account/security/app-passwords", text: "Create an <b>app password</b> in AOL Account Security → Generate app password." },
   other: { url: null, text: "Use your email password, or an app password if your provider requires one." },
 };
-
-const MS_GUIDE = `<ol class="guide">
-  <li>Open <a data-url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade">portal.azure.com → App registrations</a> and sign in with any Microsoft account. Choose <b>New registration</b>.</li>
-  <li>Name it <b>Pear Mail</b>. Under <i>Supported account types</i>, pick <b>Personal Microsoft accounts only</b> (or the option that includes personal accounts).</li>
-  <li>Under <i>Redirect URI</i>, choose <b>Public client/native (mobile &amp; desktop)</b> and enter <code>http://localhost</code>. Click <b>Register</b>.</li>
-  <li>Copy the <b>Application (client) ID</b> and paste it below.</li>
-</ol>`;
-
-const GOOGLE_GUIDE = `<ol class="guide">
-  <li>Open <a data-url="https://console.cloud.google.com/projectcreate">console.cloud.google.com</a> and create a project named <b>Pear Mail</b>.</li>
-  <li>In <a data-url="https://console.cloud.google.com/auth/overview">Google Auth Platform</a>, set up the consent screen (External), and add your Gmail address under <b>Audience → Test users</b>.</li>
-  <li>Go to <b>Clients → Create client</b>, choose <b>Desktop app</b>, and create it.</li>
-  <li>Copy the <b>Client ID</b> and <b>Client secret</b> and paste them below.</li>
-</ol>`;
 
 /**
  * Render the Add Account flow into `host`.
@@ -87,6 +73,7 @@ export function addAccountFlow(host, opts) {
 
   function provider(p) {
     if (p === "outlook") return oauth("microsoft", "Outlook.com");
+    if (p === "gmail") return oauth("google", "Gmail");
     passwordForm(p);
   }
 
@@ -101,13 +88,11 @@ export function addAccountFlow(host, opts) {
         <label>Sender Name <i>(optional)</i><input name="senderName" spellcheck="false" placeholder="Taken from your sent mail if left blank" value="${esc(prefill.senderName || "")}"></label>
         <div class="aa-servers" hidden></div>
         <div class="aa-actions">
-          ${p === "gmail" ? `<button type="button" class="btn" data-act="google">Sign in with Google instead</button>` : ""}
           <button type="submit" class="btn primary" data-act="add">${icon("arrowRight")}<span>Sign In</span></button>
         </div>
       </form>`);
     const form = root.querySelector("form");
     form.elements.namedItem("email").focus();
-    root.querySelector('[data-act="google"]')?.addEventListener("click", () => oauth("google", "Gmail", form.elements.namedItem("email").value));
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       setError("");
@@ -149,70 +134,27 @@ export function addAccountFlow(host, opts) {
     };
   }
 
-  async function oauth(kind, label, emailPrefill = "") {
-    let apps = { microsoftClientId: "", googleClientId: "", googleClientSecret: "" };
-    try { apps = await api.getOAuthApps(); } catch {}
-    const needsSetup = kind === "microsoft" ? !apps.microsoftClientId : !apps.googleClientId;
-    if (needsSetup) return oauthSetup(kind, label, apps, emailPrefill);
+  /** Google / Microsoft: one button. The address comes from the sign-in itself. */
+  function oauth(kind, label) {
     const brand = kind === "microsoft" ? "Microsoft" : "Google";
     frame(`Add ${label} Account`, `You'll sign in on ${brand}'s website in your browser. Pear Mail never sees your password.`, `
-      <form class="aa-form" autocomplete="off">
-        <label>Email<input name="email" type="email" spellcheck="false" placeholder="${kind === "microsoft" ? "name@outlook.com" : "name@gmail.com"}" value="${esc(emailPrefill)}"></label>
-        <label>Account Name <i>(optional)</i><input name="name" spellcheck="false" placeholder="e.g. Personal or Work"></label>
-        <label>Sender Name <i>(optional)</i><input name="senderName" spellcheck="false" placeholder="Taken from your sent mail if left blank"></label>
-        <div class="aa-actions">
-          <button type="button" class="btn" data-act="setup">Change ${brand} app ID…</button>
-          <button type="submit" class="btn primary" data-act="go">${icon("arrowRight")}<span>Sign in with ${brand}</span></button>
-        </div>
-      </form>`);
-    const form = root.querySelector("form");
-    form.elements.namedItem("email").focus();
-    root.querySelector('[data-act="setup"]').addEventListener("click", () => oauthSetup(kind, label, apps, form.elements.namedItem("email").value));
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
+      <div class="aa-actions aa-oauth">
+        <button class="btn primary" data-act="go">${icon("arrowRight")}<span>Sign in with ${brand}</span></button>
+        ${kind === "google" ? `<a class="aa-alt" data-act="app-password" href="#">Use an app password instead</a>` : ""}
+      </div>`);
+    root.querySelector('[data-act="app-password"]')?.addEventListener("click", (e) => { e.preventDefault(); passwordForm("gmail"); });
+    const btn = root.querySelector('[data-act="go"]');
+    btn.focus();
+    btn.addEventListener("click", async () => {
       setError("");
-      const email = form.elements.namedItem("email").value.trim();
-      if (!email) return setError("Enter your email address.");
-      const btn = form.querySelector('[data-act="go"]');
       busy(btn, true, "Finish signing in in your browser…");
       try {
-        opts.onAdded(await api.addAccount({ email, name: form.elements.namedItem("name").value.trim() || null, senderName: form.elements.namedItem("senderName").value.trim() || null, auth: kind }));
+        opts.onAdded(await api.addAccount({ auth: kind }));
       } catch (err) {
-        const msg = errText(err);
-        if (msg.startsWith("SETUP:")) return oauthSetup(kind, label, apps, email);
-        setError(msg);
+        setError(errText(err));
       } finally {
         busy(btn, false, `Sign in with ${brand}`);
       }
-    });
-  }
-
-  function oauthSetup(kind, label, apps, emailPrefill) {
-    const ms = kind === "microsoft";
-    frame(`Set Up ${ms ? "Microsoft" : "Google"} Sign-In`, ms
-      ? "Outlook.com only allows mail apps to sign in through Microsoft. Microsoft requires each app to have its own registration. This is free and takes about 5 minutes, once."
-      : "Google requires each app to have its own registration for browser sign-in. This is free and takes a few minutes, once. (You can also use a Gmail app password instead.)", `
-      ${ms ? MS_GUIDE : GOOGLE_GUIDE}
-      <form class="aa-form" autocomplete="off">
-        ${ms
-          ? `<label>Application (client) ID<input name="id" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000" value="${esc(apps.microsoftClientId)}"></label>`
-          : `<label>Client ID<input name="id" spellcheck="false" placeholder="…apps.googleusercontent.com" value="${esc(apps.googleClientId)}"></label>
-             <label>Client secret<input name="secret" spellcheck="false" value="${esc(apps.googleClientSecret)}"></label>`}
-        <div class="aa-actions"><button type="submit" class="btn primary">${icon("arrowRight")}<span>Continue</span></button></div>
-      </form>`);
-    const form = root.querySelector("form");
-    form.elements.namedItem("id").focus();
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const id = form.elements.namedItem("id").value.trim();
-      if (!id) return setError("Paste the ID from the steps above.");
-      const next = { ...apps };
-      if (ms) next.microsoftClientId = id;
-      else { next.googleClientId = id; next.googleClientSecret = form.elements.namedItem("secret").value.trim(); }
-      try {
-        await api.setOAuthApps(next);
-        oauth(kind, label, emailPrefill);
-      } catch (err) { setError(errText(err)); }
     });
   }
 }

@@ -414,6 +414,9 @@ function currentRole() {
   if (state.folder === U_FLAGGED) return "flagged";
   return folderInfo(state.folder)?.role || (keyPath() === "INBOX" ? "inbox" : null);
 }
+/** Viewing Drafts? (Unified views never include drafts, so the view's role says it all.)
+ *  Drafts get their own actions: Continue Editing, Flag, Delete Draft. */
+const inDrafts = () => currentRole() === "drafts";
 /** Role of the folder a message lives in. */
 function messageRole(m) {
   const f = foldersOf(m.account).find((x) => x.path === realFolder(m.folder));
@@ -1040,9 +1043,12 @@ function rowHtml(m, { child = false } = {}) {
     <div class="preview">${esc(m.preview || "This message has no content.")}</div>
     ${chips}
     <div class="row-actions">
-      <button data-act="seen" title="${m.seen ? "Mark as Unread" : "Mark as Read"}">${icon(m.seen ? "envelope" : "envelopeOpen")}</button>
+      ${role === "drafts"
+        // A draft is always "read": its first button continues writing it instead.
+        ? `<button data-act="edit" title="Continue Editing (Enter)">${icon("compose")}</button>`
+        : `<button data-act="seen" title="${m.seen ? "Mark as Unread" : "Mark as Read"}">${icon(m.seen ? "envelope" : "envelopeOpen")}</button>`}
       <button data-act="flag" title="${m.flagged ? "Unflag" : "Flag"}">${icon(m.flagged ? "flagFill" : "flag")}</button>
-      <button data-act="delete" title="Delete">${icon("trash")}</button>
+      <button data-act="delete" title="${role === "drafts" ? "Delete Draft" : "Delete"}">${icon("trash")}</button>
     </div>
   </div>`;
 }
@@ -1330,6 +1336,7 @@ $("list").addEventListener("mousedown", (e) => {
     const ids = state.selected.has(key) && state.selected.size > 1
       ? [...selectedIds()]
       : listEntries({ includeCollapsedGroups: true }).find((x) => x.key === key)?.ids || [key];
+    if (act.dataset.act === "edit") openDraftById(key);
     if (act.dataset.act === "seen") toggleSeen(ids);
     if (act.dataset.act === "flag") toggleFlag(ids);
     if (act.dataset.act === "delete") deleteMessages(ids);
@@ -1784,7 +1791,12 @@ function renderToolbar() {
   const selMsgs = selectedIds().map(msgById).filter(Boolean);
   const sm = selMsgs.length ? { seen: !selMsgs.some((m) => !m.seen), flagged: selMsgs.every((m) => m.flagged) } : null;
   const btn = (id, ic, title, dis = !has, extra = "") => `<button class="tb-btn" id="${id}" title="${title}" ${dis ? "disabled" : ""}>${icon(ic)}${extra}</button>`;
-  $("reader-toolbar").innerHTML = `
+  $("reader-toolbar").innerHTML = inDrafts() ? `
+    <div class="spacer"></div>
+    ${btn("tb-flag", sm?.flagged ? "flagFill" : "flag", sm?.flagged ? "Unflag (Ctrl+Shift+L)" : "Flag (Ctrl+Shift+L)")}
+    ${btn("tb-trash", "trash", state.selected.size > 1 ? "Delete Drafts (Del)" : "Delete Draft (Del)")}
+    <div class="tb-sep"></div>
+    ${btn("tb-more", "more", "More", !single)}` : `
     <div class="spacer"></div>
     ${btn("tb-unread", sm && !sm.seen ? "envelopeOpen" : "envelope", sm && !sm.seen ? "Mark as Read (Ctrl+Shift+U)" : "Mark as Unread (Ctrl+Shift+U)")}
     ${btn("tb-flag", sm?.flagged ? "flagFill" : "flag", sm?.flagged ? "Unflag (Ctrl+Shift+L)" : "Flag (Ctrl+Shift+L)")}
@@ -2663,6 +2675,17 @@ function messageMenu() {
   const anyUnflagged = ms.some((m) => !m.flagged);
   const single = state.selected.size === 1 && state.detail;
   const allJunk = ms.length > 0 && ms.every((m) => messageRole(m) === "junk");
+  if (inDrafts()) {
+    // Only what makes sense for an unsent message of your own.
+    const one = ids.length === 1;
+    return [
+      { label: "Continue Editing", icon: "compose", kbd: "Enter", disabled: !one, action: () => openDraftById(ids[0]) },
+      { sep: true },
+      { label: anyUnflagged ? "Flag" : "Unflag", icon: "flag", action: () => toggleFlag() },
+      { sep: true },
+      { label: one ? "Delete Draft" : "Delete Drafts", icon: "trash", danger: true, kbd: "Del", action: () => deleteMessages() },
+    ];
+  }
   return [
     { label: "Reply", icon: "reply", disabled: !single, action: () => reply("reply") },
     { label: "Reply All", icon: "replyAll", disabled: !single, action: () => reply("replyAll") },
@@ -2681,6 +2704,17 @@ function messageMenu() {
 function moreMenu() {
   const d = state.detail;
   const junk = currentRole() === "junk";
+  if (inDrafts()) {
+    // Viewing tools only: no replying to, junking or VIP-ing your own unsent message.
+    return [
+      { label: "Print…", icon: "print", kbd: "Ctrl+P", action: printMessage },
+      { label: "Zoom In", kbd: "Ctrl+=", action: () => setZoom(settings.zoom + 10) },
+      { label: "Zoom Out", kbd: "Ctrl+-", action: () => setZoom(settings.zoom - 10) },
+      { label: "Actual Size", kbd: "Ctrl+0", action: () => setZoom(100) },
+      { label: state.showHeaders ? "Hide All Headers" : "Show All Headers", action: () => { state.showHeaders = !state.showHeaders; if (state.detail) renderCard(state.conv, state.detail.id); } },
+      { label: "View Source", icon: "doc", action: viewSource },
+    ];
+  }
   return [
     { label: "Reply", icon: "reply", action: () => reply("reply") },
     { label: "Reply All", icon: "replyAll", action: () => reply("replyAll") },
@@ -3193,6 +3227,11 @@ document.addEventListener("keydown", (e) => {
   if (ctrl && k === "p") { e.preventDefault(); printMessage(); return; }
   if (k === "f5") { e.preventDefault(); refreshAll(true); return; }
   if (typing) return;
+  // In Drafts, shortcuts match the draft menus: no replying, read/unread, junk or archive.
+  if (inDrafts() && ((ctrl && (k === "r" || (e.shiftKey && (k === "f" || k === "u" || k === "j")))) || (!ctrl && k === "e"))) {
+    e.preventDefault();
+    return;
+  }
   if (ctrl && e.shiftKey && k === "r") { e.preventDefault(); reply("replyAll"); return; }
   if (ctrl && k === "r") { e.preventDefault(); reply("reply"); return; }
   if (ctrl && e.shiftKey && k === "f") { e.preventDefault(); reply("forward"); return; }

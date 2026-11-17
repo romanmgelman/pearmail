@@ -166,8 +166,10 @@ fn html_to_text(html: &str, keep_quotes: bool) -> String {
     use lol_html::html_content::ContentType;
     use lol_html::{element, rewrite_str, RewriteStrSettings};
     // Not "head" as a whole: a head the download cut off before its end would swallow everything.
-    const MEDIA: &str = "title, style, script, noscript, img, svg, picture, video, audio, meta, link";
-    const QUOTES: &str = "title, style, script, noscript, img, svg, picture, video, audio, meta, link, blockquote, .gmail_quote, #divRplyFwdMsg, #appendonsend, .yahoo_quoted, .moz-cite-prefix";
+    // Signatures never make a preview: the sender's name and phone number aren't what the
+    // message says (and Gmail's mobile app puts the signature above a forwarded message).
+    const MEDIA: &str = "title, style, script, noscript, img, svg, picture, video, audio, meta, link, [data-smartmail=\"gmail_signature\"], .gmail_signature, .moz-signature, #Signature";
+    const QUOTES: &str = "title, style, script, noscript, img, svg, picture, video, audio, meta, link, [data-smartmail=\"gmail_signature\"], .gmail_signature, .moz-signature, #Signature, blockquote, .gmail_quote, #divRplyFwdMsg, #appendonsend, .yahoo_quoted, .moz-cite-prefix";
     let drop = if keep_quotes { MEDIA } else { QUOTES };
     const BLOCKS: &str = "p, div, br, tr, li, h1, h2, h3, h4, h5, h6, table, td, th, ul, ol, section, article, header, footer, hr";
     let stripped = rewrite_str(
@@ -374,16 +376,64 @@ fn qp_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The line that starts a forwarded message: Gmail's "---------- Forwarded message ---------"
+/// or Apple Mail's "Begin forwarded message:". (Not "-----Original Message-----": Outlook
+/// puts that above replies too.)
+fn is_forward_marker(l: &str) -> bool {
+    let lower = l.to_lowercase();
+    (lower.starts_with("--") && lower.contains("forwarded message")) || lower.starts_with("begin forwarded message")
+}
+
+/// The name in a forwarded header's "From:" value: `Lisa Reeves <l@x.com>` → `Lisa Reeves`,
+/// `"Reeves, Lisa" <l@x.com>` → `Reeves, Lisa`, a bare address stays as it is.
+fn forward_sender(from: &str) -> String {
+    let name = from.split('<').next().unwrap_or("").trim().trim_matches(['"', '\'']).trim();
+    if name.is_empty() { from.trim_matches(['<', '>', ' ']).to_string() } else { name.to_string() }
+}
+
 /// Collapse a text into one preview line: skip quotes, signatures, bare links,
 /// invisible spacers and lines of only punctuation; at most 240 characters.
 fn clean_preview(text: &str, keep_quotes: bool, keep_links: bool) -> String {
     let invisible = |c: char| matches!(c, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}' | '\u{ad}' | '\u{34f}' | '\u{180e}');
     let mut out = String::with_capacity(300);
+    // A forwarded message's header ("---------- Forwarded message ---------", From/Date/…)
+    // isn't content: it becomes a short "Fwd from <name>: " in front of the forwarded text.
+    let mut in_fwd_header = false;
+    let mut in_signature = false;
+    let mut fwd_from: Option<String> = None;
     for line in text.lines() {
         let line: String = line.chars().filter(|c| !invisible(*c)).map(|c| if c.is_whitespace() { ' ' } else { c }).collect();
         let l = line.trim();
+        if keep_quotes && is_forward_marker(l) {
+            in_fwd_header = true;
+            in_signature = false;
+            continue;
+        }
         if l == "--" || l == "-- " {
-            break; // signature
+            // A signature ends the message, unless nothing came before it: then a forward
+            // may follow below it (Gmail's mobile app puts the signature first).
+            if out.is_empty() && keep_quotes {
+                in_signature = true;
+                continue;
+            }
+            break;
+        }
+        if in_signature {
+            continue;
+        }
+        if in_fwd_header {
+            let lower = l.to_lowercase();
+            if l.is_empty() || l.chars().all(|c| c == '_' || c == '-') {
+                continue;
+            }
+            if let Some(from) = lower.strip_prefix("from:").map(|_| l[5..].trim()) {
+                fwd_from = Some(forward_sender(from));
+                continue;
+            }
+            if ["date:", "sent:", "subject:", "to:", "cc:", "reply-to:"].iter().any(|k| lower.starts_with(k)) {
+                continue;
+            }
+            in_fwd_header = false; // the forwarded text starts here
         }
         if l.starts_with('>') && !keep_quotes {
             continue;
@@ -401,6 +451,11 @@ fn clean_preview(text: &str, keep_quotes: bool, keep_links: bool) -> String {
             .collect();
         if words.is_empty() {
             continue;
+        }
+        if out.is_empty() {
+            if let Some(name) = fwd_from.take().filter(|n| !n.is_empty()) {
+                out.push_str(&format!("Fwd from {name}:"));
+            }
         }
         if !out.is_empty() {
             out.push(' ');
@@ -1063,6 +1118,31 @@ iVBORw0KGgo=
         assert!(!clean.contains("<iframe"));
         assert!(clean.contains("data-pm-part=\"0\""), "{clean}");
         assert!(!remote);
+    }
+
+    /// Gmail's mobile app: the forwarder's signature first, then the forwarded message.
+    /// The preview is what was forwarded, labelled with who wrote it.
+    #[test]
+    fn previews_a_forward_below_a_signature() {
+        let raw = "Content-Type: text/html; charset=utf-8
+
+<div dir=\"auto\"><div><br></div><div data-smartmail=\"gmail_signature\"><div>-- <br>Pat Lee, Esq.<br>123 Main St<br>(555) 010-0000</div></div></div><br>\
+<div class=\"gmail_quote gmail_quote_container\"><div dir=\"ltr\" class=\"gmail_attr\">---------- Forwarded message ---------<br>\
+From: <strong class=\"gmail_sendername\">Sam Doe</strong> <span>&lt;sam@example.com&gt;</span><br>Date: Mon, Nov 16, 2026 at 2:44 PM<br>\
+Subject: Failed Verification Screen<br>To: Pat Lee &lt;pat@example.com&gt;<br></div><br><br><div dir=\"ltr\"><div>The verification screen fails for this case.</div>\
+<div class=\"gmail_signature\" data-smartmail=\"gmail_signature\"><div>Regards,</div><div>Sam Doe</div></div></div></div>
+";
+        let m = parse(raw.as_bytes()).unwrap();
+        assert_eq!(preview_of(&m), "Fwd from Sam Doe: The verification screen fails for this case.");
+    }
+
+    /// A plain-text forward from Apple Mail, and an ordinary reply whose signature comes last.
+    #[test]
+    fn previews_plain_forward_and_keeps_reply_previews() {
+        let fwd = clean_preview("\n\nBegin forwarded message:\n\nFrom: \"Doe, Sam\" <sam@example.com>\nSubject: Hi\nDate: Nov 16\nTo: Pat <pat@example.com>\n\nPlease look at this.\n", true, false);
+        assert_eq!(fwd, "Fwd from Doe, Sam: Please look at this.");
+        let reply = clean_preview("Sounds good, thanks!\n-- \nPat Lee\n(555) 010-0000\n", false, false);
+        assert_eq!(reply, "Sounds good, thanks!");
     }
 
     /// A picture embedded in the body isn't listed as an attachment, but can still be

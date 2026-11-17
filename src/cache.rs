@@ -294,7 +294,7 @@ mod tests {
             in_reply_to: String::new(),
             references: vec![],
             thread_v: 1,
-            preview_v: 10,
+            preview_v: crate::model::PREVIEW_V,
         }
     }
 

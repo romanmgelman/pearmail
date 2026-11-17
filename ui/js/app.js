@@ -2083,14 +2083,42 @@ function cardElement(conv, id) {
   return el;
 }
 
+const FORWARD_RE = /-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message/i;
+
+/** Does this quote block start a forwarded message (not a reply's quoted history)? Looks only
+ *  at its header and the lines just before it, so a reply that quotes a forward still folds. */
+function isForwardBlock(start, subject) {
+  const head = (start.querySelector(".gmail_attr, .moz-cite-prefix") || start).textContent.slice(0, 200);
+  let before = "";
+  for (let p = start.previousSibling, i = 0; p && i < 4; p = p.previousSibling, i++) before = (p.textContent || "") + "\n" + before;
+  if (FORWARD_RE.test(head) || FORWARD_RE.test(before.slice(-200))) return true;
+  // Outlook writes the same "From: … Sent: …" block for replies and forwards; the subject tells.
+  return (start.id === "divRplyFwdMsg" || start.id === "appendonsend") && /^\s*(fwd?|fw)\s*:/i.test(subject);
+}
+
+/** Is there anything to read outside the folded quote, not counting signatures? */
+function hasOwnWords(body) {
+  let text = body.innerText; // only what's shown: folded parts are already hidden
+  for (const sig of body.querySelectorAll('[data-smartmail="gmail_signature"], .gmail_signature, .moz-signature, #Signature, #signature')) {
+    if (!sig.closest(".pm-q")) text = text.replace(sig.innerText, "");
+  }
+  // Plain text: a "-- " line starts the signature.
+  text = text.split(/^--\s*$/m)[0];
+  return /[\p{L}\p{N}]/u.test(text);
+}
+
 /**
  * In a conversation the earlier messages are right there, so each message's quoted
  * history is folded away behind a "•••" pill (like Outlook and Apple Mail).
+ * Forwards and messages that would look empty without their quote stay unfolded.
  */
-function hideQuoted(doc, onToggle) {
+function hideQuoted(doc, onToggle, subject = "") {
   const body = doc.body;
   const start = body.querySelector("#divRplyFwdMsg, #appendonsend, .gmail_quote, .yahoo_quoted, .moz-cite-prefix, blockquote[type=cite], .pm-quote");
   if (!start) return;
+  // Folding works because the quoted history is right there in the conversation. A forward
+  // is the opposite: it brings something you haven't seen. Never hide it.
+  if (isForwardBlock(start, subject)) return;
   // Plain text with replies written between quoted lines: leave it as is.
   if (start.classList.contains("pm-quote")) {
     for (let s = start.nextSibling; s; s = s.nextSibling) {
@@ -2124,8 +2152,8 @@ function hideQuoted(doc, onToggle) {
   }
   if (!hide.length) return;
   hide.forEach((n) => n.classList.add("pm-q"));
-  // Nothing left to read (e.g. a bare forward)? Then don't fold anything.
-  if (!body.innerText.trim()) { hide.forEach((n) => n.classList.remove("pm-q")); return; }
+  // Nothing left to read but a signature? Then don't fold anything: the message would look empty.
+  if (!hasOwnWords(body)) { hide.forEach((n) => n.classList.remove("pm-q")); return; }
   const pill = doc.createElement("div");
   pill.className = "pm-more";
   pill.title = "Show quoted text";
@@ -2190,7 +2218,7 @@ body.pm-show-q .pm-q{display:revert !important;}
     fit();
   };
   const setup = async (doc) => {
-    if (hideQuotes) { try { hideQuoted(doc, () => fitFrameAnimated(frame)); } catch {} }
+    if (hideQuotes) { try { hideQuoted(doc, () => fitFrameAnimated(frame), d.subject || ""); } catch {} }
     if (adapted) {
       await applyMessageTheme(frame, true, false);
       if (!frame.isConnected) return;

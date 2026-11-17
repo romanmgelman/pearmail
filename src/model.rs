@@ -40,6 +40,11 @@ pub struct Person {
     pub email: String,
 }
 
+/// Version of the list-preview builder (`mime::preview_of`). Raise it when previews should
+/// change: cached summaries made by an older version are fetched again.
+/// 11: signatures skipped; forwards preview as "Fwd from <name>: …".
+pub const PREVIEW_V: u8 = 11;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageSummary {
@@ -75,7 +80,7 @@ pub struct MessageSummary {
     /// 1 once the threading headers above have been extracted (0 = old cache row).
     #[serde(default)]
     pub thread_v: u8,
-    /// Version of the preview builder that made `preview` (5 = current; older rows are refetched).
+    /// Version of the preview builder that made `preview` (see `PREVIEW_V`; older rows are refetched).
     #[serde(default)]
     pub preview_v: u8,
 }

@@ -320,7 +320,7 @@ fn summary_from_fetch(f: &Fetch, folder: &str) -> Option<MessageSummary> {
         in_reply_to,
         references,
         thread_v: 1,
-        preview_v: 10,
+        preview_v: PREVIEW_V,
     })
 }
 
@@ -634,7 +634,7 @@ impl Imap {
 
                 let mut have = cache.summaries(&real, &page);
                 // Rows cached with an older preview are downloaded again (their preview improves).
-                have.retain(|_, m| m.preview_v >= 10);
+                have.retain(|_, m| m.preview_v >= PREVIEW_V);
                 let missing: Vec<u32> = page.iter().copied().filter(|u| !have.contains_key(u)).collect();
                 let known: Vec<u32> = page.iter().copied().filter(|u| have.contains_key(u)).collect();
 
@@ -858,7 +858,7 @@ impl Imap {
             in_reply_to,
             references,
             thread_v: 1,
-        preview_v: 10,
+        preview_v: PREVIEW_V,
         }
     }
 

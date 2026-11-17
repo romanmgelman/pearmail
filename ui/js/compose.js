@@ -351,7 +351,7 @@ export function openCompose(opts) {
     draftUid = null;
     try {
       await api.discardDraft(from.id, uid);
-      opts.onDone?.("draft");
+      opts.onDone?.("draftDeleted", { account: from.id, uid });
     } catch {}
   }
 

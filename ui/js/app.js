@@ -948,12 +948,31 @@ async function softRefreshList() {
   if (allFailed) return handleError(firstError, true);
   if (!firstError) setOffline(false);
   const merged = mergePages(pairs);
+  // Where the open message sat, in case it's gone after this refresh (see below).
+  const shownKey = state.conv && state.selected.size === 1 ? [...state.selected][0] : null;
+  const openIdx = shownKey ? listEntries().findIndex((e) => e.key === shownKey) : -1;
   acceptMerged(merged, startedAt);
   rememberContacts(merged.messages.map((m) => m.from));
   renderList();
+  // The open message vanished on the server (a draft replaced by its newer save or sent,
+  // mail deleted on another device): don't leave a ghost in the reader. Select the row
+  // that took its place, like a delete does, but never mark it read on a background refresh.
+  if (state.conv && openIdx >= 0 && !convStillListed(state.conv)) {
+    const rest = visibleKeys();
+    const next = rest[Math.min(openIdx, rest.length - 1)];
+    if (next) selectOnly(next, { open: true, markSeen: false });
+    else closeReader();
+  }
   renderListHeader();
   prefetchVisible();
   if (currentRole() === "inbox" && state.filter === "all" && !state.query) checkNewMail(merged.messages);
+}
+
+/** Is any message of this conversation still in the list? (Its replies from Sent and
+ *  just-sent local copies don't count: they're never rows of this list.) */
+function convStillListed(conv) {
+  const ids = new Set(state.messages.map((m) => m.id));
+  return [...conv.cards.values()].some((c) => !c.m.local && ids.has(c.m.id));
 }
 
 function renderListHeader() {
@@ -1331,10 +1350,6 @@ $("list").addEventListener("mousedown", (e) => {
     updateSelectionClasses();
     afterSelectionChange();
     e.preventDefault();
-  } else if (currentRole() === "drafts") {
-    // Like iCloud Mail: a draft opens straight in the compose window, ready to keep writing.
-    if (!state.selected.has(id) || state.selected.size > 1) selectOnly(id, { open: true });
-    openDraftById(id);
   } else if (!state.selected.has(id) || state.selected.size > 1) {
     selectOnly(id, { open: true });
   }
@@ -1764,14 +1779,12 @@ function canArchive(ids = selectedIds()) {
 
 function renderToolbar() {
   const has = state.selected.size > 0;
-  const role = currentRole();
   const single = state.selected.size === 1;
   // Icons reflect the whole selection (a conversation row covers several messages).
   const selMsgs = selectedIds().map(msgById).filter(Boolean);
   const sm = selMsgs.length ? { seen: !selMsgs.some((m) => !m.seen), flagged: selMsgs.every((m) => m.flagged) } : null;
   const btn = (id, ic, title, dis = !has, extra = "") => `<button class="tb-btn" id="${id}" title="${title}" ${dis ? "disabled" : ""}>${icon(ic)}${extra}</button>`;
   $("reader-toolbar").innerHTML = `
-    ${role === "drafts" && single ? `<button class="tb-btn" id="tb-edit" title="Edit Draft" style="padding:0 10px;font-weight:500">Edit Draft</button>` : ""}
     <div class="spacer"></div>
     ${btn("tb-unread", sm && !sm.seen ? "envelopeOpen" : "envelope", sm && !sm.seen ? "Mark as Read (Ctrl+Shift+U)" : "Mark as Unread (Ctrl+Shift+U)")}
     ${btn("tb-flag", sm?.flagged ? "flagFill" : "flag", sm?.flagged ? "Unflag (Ctrl+Shift+L)" : "Flag (Ctrl+Shift+L)")}
@@ -1782,7 +1795,6 @@ function renderToolbar() {
     ${btn("tb-reply", "reply", "Reply, Reply All or Forward", !single, icon("chevronDown", "caret"))}
     ${btn("tb-more", "more", "More", !single)}`;
   const on = (id, fn) => $(id)?.addEventListener("click", fn);
-  on("tb-edit", editDraft);
   on("tb-unread", () => toggleSeen());
   on("tb-flag", () => toggleFlag());
   on("tb-move", (e) => showMoveMenu(e.currentTarget.getBoundingClientRect()));
@@ -2603,6 +2615,14 @@ function compose(opts = {}) {
     avatar: (p) => avatarHtml(p, "sug-avatar"), // same contact photos / initials as the inbox
     onDone: (what, info) => {
       if (what === "sent" && info) showSentInConversation(info);
+      if (what === "draftDeleted" && info) {
+        // Same as deleting it from the list: the row goes, and the next one is selected.
+        const m = state.messages.find((x) => x.account === info.account && x.uid === info.uid && messageRole(x) === "drafts");
+        if (m) { markRemoved([m.id]); removeFromList([m.id]); }
+        else if (currentRole() === "drafts") softRefreshList(); // not listed yet (a newer save): just reload
+        loadFolders();
+        return;
+      }
       const r = currentRole();
       if ((what === "sent" && r === "sent") || (what === "draft" && r === "drafts")) softRefreshList();
       loadFolders();
@@ -2614,7 +2634,7 @@ function reply(mode) {
   if (state.detail) compose({ mode, source: state.detail });
 }
 
-/** Toolbar "Edit Draft" / Enter: open the selected draft in the compose window. */
+/** Enter on a selected draft: same as its "Continue Editing" button. */
 function editDraft() {
   if (state.selected.size === 1) openDraftById([...state.selected][0]);
 }

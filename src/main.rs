@@ -6,6 +6,7 @@ mod applog;
 mod cache;
 mod commands;
 mod contacts;
+mod crash_guard;
 mod imap;
 mod mime;
 mod notify;
@@ -173,6 +174,8 @@ It should show the Pear Mail name and icon.", || {});
             // Safety net: show the window even if the page never signals it's ready.
             use tauri::Manager;
             if let Some(w) = app.get_webview_window("main") {
+                // Reload by itself (and log why) if the page's process crashes.
+                crash_guard::install(&w);
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     if !w.is_visible().unwrap_or(true) {

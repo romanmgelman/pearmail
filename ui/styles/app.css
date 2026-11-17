@@ -574,22 +574,15 @@ input, textarea { font: inherit; color: inherit; }
 /* ===== Smooth light/dark switching ===== */
 /* The per-message slider only matters in dark mode; hide it without changing layout height. */
 html:not(.is-dark) #hd-light { display: none; }
-/* Whole-window crossfade when the theme changes (View Transitions). */
-::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.42s; animation-timing-function: ease; }
-/* Fallback when View Transitions aren't available. */
+/* Colors fade when the theme changes. (Not View Transitions: in WebView2 those crashed
+   the page's renderer process now and then after the window had been idle.) */
 html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after,
 .msg-card.theme-anim *, .msg-card.theme-anim *::before, .msg-card.theme-anim *::after {
-  transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease !important;
+  transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease, box-shadow 0.4s ease !important;
 }
-
-/* The theme switches never crossfade: they keep their own slide animation and
-   simply show their final state while the rest of the window fades around them. */
-#btn-theme { view-transition-name: theme-switch; }
-.settings input[name="themeAuto"] + .switch { view-transition-name: set-theme-auto; }
-.settings input[name="themeDark"] + .switch { view-transition-name: set-theme-dark; }
-::view-transition-group(theme-switch), ::view-transition-group(set-theme-auto), ::view-transition-group(set-theme-dark) { animation: none; }
-::view-transition-old(theme-switch), ::view-transition-old(set-theme-auto), ::view-transition-old(set-theme-dark) { display: none; }
-::view-transition-new(theme-switch), ::view-transition-new(set-theme-auto), ::view-transition-new(set-theme-dark) { animation: none; }
+/* The theme switches keep their own slide animation (it has already finished by now). */
+html.theme-anim #btn-theme, html.theme-anim #btn-theme *,
+html.theme-anim .settings .switch, html.theme-anim .settings .switch * { transition: none !important; }
 
 /* ===== Contact photos: rounded squares (Apple-style continuous-corner look) ===== */
 .avatar { border-radius: 28%; overflow: hidden; }

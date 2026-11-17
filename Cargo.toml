@@ -1,6 +1,6 @@
 [package]
 name = "pearmail"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Pear Mail, an email client"
 authors = ["Roman Gelman"]
@@ -38,6 +38,8 @@ getrandom = "0.2"
 sha2 = "0.11.1"
 windows = { version = "0.62", features = ["UI_Notifications", "Data_Xml_Dom", "Foundation", "Win32_System_Com"] }
 winreg = "0.56.0"
+# Same version wry uses: lets us watch the WebView2 page for crashes (src/crash_guard.rs).
+webview2-com = "0.39"
 socket2 = { version = "0.6", features = ["all"] }
 
 # Image decoding is far too slow unoptimized; optimize dependencies in dev builds too.

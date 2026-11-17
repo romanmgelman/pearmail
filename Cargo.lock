@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "pearmail"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -3042,6 +3042,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tokio",
  "tokio-native-tls",
+ "webview2-com",
  "windows",
  "winreg",
 ]

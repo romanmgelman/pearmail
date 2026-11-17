@@ -184,32 +184,29 @@ function setTheme(t, delay = 0) {
 }
 
 /**
- * Smoothly switch the app between light and dark: the whole window crossfades
- * (View Transitions), and the open message is recolored in place, no reload.
+ * Smoothly switch the app between light and dark: colors fade (CSS transitions),
+ * and the open message is recolored in place, no reload.
+ *
+ * This deliberately doesn't use View Transitions (document.startViewTransition): in
+ * WebView2 they occasionally crashed the page's renderer process (a Chromium CHECK)
+ * when the window had been idle, leaving the "Something went wrong" page.
  */
+let themeAnimTimer = null;
+let lastThemeLog = 0;
 function themeTransition(change) {
-  let done = false;
-  const run = async () => {
-    if (done) return;
-    done = true;
-    change?.();
-    applySettings();
-    await updateReaderTheme(false);
-  };
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (document.startViewTransition && !reduce) {
-    const vt = document.startViewTransition(run);
-    // A newer switch skips an in-flight one; that's expected, not an error.
-    for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p?.catch(() => {});
-    // Safety net: if the transition can't start (no frame rendered), apply directly.
-    setTimeout(run, 250);
-    vt.finished.then(syncNativeTheme, syncNativeTheme);
-  } else {
-    const root = document.documentElement;
-    root.classList.add("theme-anim");
-    run();
-    setTimeout(() => { root.classList.remove("theme-anim"); syncNativeTheme(); }, 450);
+  // Breadcrumb for the diagnostic log, in case a page crash ever follows a switch.
+  if (Date.now() - lastThemeLog > 10_000) {
+    lastThemeLog = Date.now();
+    api.logEvent("theme", "switched light/dark");
   }
+  const root = document.documentElement;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduce) root.classList.add("theme-anim");
+  change?.();
+  applySettings();
+  updateReaderTheme(false).catch((e) => console.warn(e));
+  clearTimeout(themeAnimTimer);
+  themeAnimTimer = setTimeout(() => { root.classList.remove("theme-anim"); syncNativeTheme(); }, reduce ? 0 : 450);
 }
 
 /** Sidebar switch: flip between light and dark (leaves Automatic). */

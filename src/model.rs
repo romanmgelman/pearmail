@@ -122,6 +122,8 @@ pub struct MessageDetail {
     pub text: String,
     pub has_remote_content: bool,
     pub attachments: Vec<AttachmentInfo>,
+    /// Pictures embedded in the body (not in `attachments`), openable in the viewer.
+    pub inline_images: Vec<AttachmentInfo>,
     pub message_id: Option<String>,
     pub references: Vec<String>,
     pub seen: bool,

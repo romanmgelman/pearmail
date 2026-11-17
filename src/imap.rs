@@ -969,6 +969,7 @@ impl Imap {
             text,
             has_remote_content: remote,
             attachments: mime::attachments(&msg),
+            inline_images: mime::inline_images(&msg),
             message_id: msg.message_id().map(|s| s.to_string()),
             references: mime::header_list(msg.references()),
             seen: true,

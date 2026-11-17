@@ -517,21 +517,27 @@ pub fn attachments_partial(msg: &Message, raw_len: usize) -> Vec<AttachmentInfo>
         .collect()
 }
 
+/// Inline images shown in the body are hidden from the attachment list, unless the
+/// WebView can't display them natively (e.g. TIFF), like Outlook.
+fn is_hidden_inline(a: &mail_parser::MessagePart) -> bool {
+    let inline = a.content_disposition().map(|d| d.ctype().eq_ignore_ascii_case("inline")).unwrap_or(false);
+    inline && a.content_id().is_some() && web_renderable(&part_mime(a))
+}
+
+fn attachment_info(i: usize, a: &mail_parser::MessagePart) -> AttachmentInfo {
+    let mime = part_mime(a);
+    let name = display_name(a, i, &mime);
+    AttachmentInfo { index: i, kind: preview_kind(&mime, &name), size: a.contents().len(), name, mime }
+}
+
 pub fn attachments(msg: &Message) -> Vec<AttachmentInfo> {
-    msg.attachments()
-        .enumerate()
-        .filter(|(_, a)| {
-            // Inline images shown in the body are hidden from the list, unless the
-            // WebView can't display them natively (e.g. TIFF), like Outlook.
-            let inline = a.content_disposition().map(|d| d.ctype().eq_ignore_ascii_case("inline")).unwrap_or(false);
-            !(inline && a.content_id().is_some() && web_renderable(&part_mime(a)))
-        })
-        .map(|(i, a)| {
-            let mime = part_mime(a);
-            let name = display_name(a, i, &mime);
-            AttachmentInfo { index: i, kind: preview_kind(&mime, &name), size: a.contents().len(), name, mime }
-        })
-        .collect()
+    msg.attachments().enumerate().filter(|(_, a)| !is_hidden_inline(a)).map(|(i, a)| attachment_info(i, a)).collect()
+}
+
+/// The pictures embedded in the body that `attachments` leaves out: still openable in the
+/// viewer when clicked (same index space as `data-pm-part`).
+pub fn inline_images(msg: &Message) -> Vec<AttachmentInfo> {
+    msg.attachments().enumerate().filter(|(_, a)| is_hidden_inline(a)).map(|(i, a)| attachment_info(i, a)).collect()
 }
 
 /// (file name, mime, bytes) of attachment `index`.
@@ -1057,6 +1063,35 @@ iVBORw0KGgo=
         assert!(!clean.contains("<iframe"));
         assert!(clean.contains("data-pm-part=\"0\""), "{clean}");
         assert!(!remote);
+    }
+
+    /// A picture embedded in the body isn't listed as an attachment, but can still be
+    /// opened in the viewer: it's in `inline_images` under the index the body refers to.
+    #[test]
+    fn lists_inline_images_separately() {
+        let raw = "Content-Type: multipart/related; boundary=\"B\"
+
+--B
+Content-Type: text/html
+
+<p>See:</p><img src=\"cid:ii_shot\">
+--B
+Content-Type: image/png; name=\"Screenshot 1.png\"
+Content-Disposition: inline; filename=\"Screenshot 1.png\"
+Content-ID: <ii_shot>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--B--
+";
+        let m = parse(raw.as_bytes()).unwrap();
+        assert!(attachments(&m).is_empty());
+        let inl = inline_images(&m);
+        assert_eq!(inl.len(), 1);
+        assert_eq!(inl[0].name, "Screenshot 1.png");
+        assert_eq!(inl[0].kind, "image");
+        let (clean, _) = sanitize_html(&m.body_html(0).unwrap(), &m);
+        assert!(clean.contains(&format!("data-pm-part=\"{}\"", inl[0].index)), "{clean}");
     }
 
     #[test]

@@ -2224,7 +2224,7 @@ body.pm-show-q .pm-q{display:revert !important;}
     lazyImages(frame, doc, d, fit);
     doc.addEventListener("click", (e) => {
       const img = e.target.closest("img[data-pm-part]");
-      if (img && d.attachments.some((a) => a.index === +img.dataset.pmPart)) { openPreview(d, +img.dataset.pmPart); return; }
+      if (img && img.dataset.pmZoom && viewablePart(d, +img.dataset.pmPart)) { openPreview(d, +img.dataset.pmPart, frame); return; }
       const a = e.target.closest("a[href]");
       if (!a) return;
       e.preventDefault();
@@ -2249,7 +2249,18 @@ body.pm-show-q .pm-q{display:revert !important;}
 function lazyImages(frame, doc, d, fit) {
   const remoteImgs = [...doc.querySelectorAll("img[data-pm-src], img[data-pm-srcset]")];
   const partImgs = d.partial ? [] : [...doc.querySelectorAll("img[data-pm-part]")];
-  doc.querySelectorAll("img[data-pm-part]").forEach((img) => (img.style.cursor = "zoom-in"));
+  // A zoom cursor (and a click that opens the viewer) for pictures worth enlarging:
+  // not tiny ones like signature icons and social-media logos.
+  doc.querySelectorAll("img[data-pm-part]").forEach((img) => {
+    if (!viewablePart(d, +img.dataset.pmPart)) return;
+    const mark = () => {
+      if (img.naturalWidth < 48 && img.naturalHeight < 48) return;
+      img.dataset.pmZoom = "1";
+      img.style.cursor = "zoom-in";
+    };
+    if (img.complete && img.naturalWidth) mark();
+    else img.addEventListener("load", mark);
+  });
   const queue = [];
   let active = 0;
   const pump = () => {
@@ -2363,8 +2374,30 @@ function decodeText(buf) {
  * Quick Look-style viewer for a message's attachments: images, PDFs (the WebView's own
  * PDF viewer), audio/video, text and HTML. Arrows step through the previewable ones.
  */
-function openPreview(d, startIdx) {
-  const items = d.attachments.filter(canPreview);
+/** Pictures embedded in this message's body worth enlarging (the zoomable ones), in the
+ *  order they appear there. Attachments aren't included: they come from `d.attachments`. */
+function bodyImages(d, frame) {
+  const doc = frame?.contentDocument;
+  if (!doc) return [];
+  const byIdx = new Map((d.inlineImages || []).map((a) => [a.index, a]));
+  const seen = new Set();
+  const out = [];
+  for (const img of doc.querySelectorAll("img[data-pm-part][data-pm-zoom]")) {
+    const i = +img.dataset.pmPart;
+    if (seen.has(i) || !byIdx.has(i)) continue;
+    seen.add(i);
+    out.push(byIdx.get(i));
+  }
+  return out;
+}
+
+/** Can a click on this embedded picture open the viewer? */
+const viewablePart = (d, idx) => d.attachments.some((a) => a.index === idx) || (d.inlineImages || []).some((a) => a.index === idx);
+
+/** The viewer. Opened from a picture in the body (`frame` given), it pages through the body's
+ *  pictures and then the attachments; opened from an attachment, just the attachments. */
+function openPreview(d, startIdx, frame = null) {
+  const items = [...bodyImages(d, frame), ...d.attachments.filter(canPreview)];
   if (!items.length) return;
   let pos = Math.max(0, items.findIndex((a) => a.index === startIdx));
   let blobUrl = null;

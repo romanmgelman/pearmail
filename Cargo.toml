@@ -1,6 +1,6 @@
 [package]
 name = "pearmail"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Pear Mail, an email client"
 authors = ["Roman Gelman"]

@@ -192,6 +192,22 @@ impl Cache {
         self.remove(folder, &gone);
     }
 
+    /// Like `retain`, but only for cached UIDs in `lo..=hi` (the part of the mailbox just
+    /// listed), so huge mailboxes never need their full UID list.
+    pub fn retain_range(&self, folder: &str, lo: u32, hi: u32, keep: &HashSet<u32>) {
+        if lo > hi {
+            return;
+        }
+        let cached: Vec<u32> = {
+            let c = self.conn.lock().unwrap();
+            let Ok(mut st) = c.prepare("SELECT uid FROM messages WHERE folder=?1 AND uid BETWEEN ?2 AND ?3") else { return };
+            let x = st.query_map(params![folder, lo, hi], |r| r.get::<_, u32>(0)).map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default();
+            x
+        };
+        let gone: Vec<u32> = cached.into_iter().filter(|u| !keep.contains(u)).collect();
+        self.remove(folder, &gone);
+    }
+
     pub fn remove(&self, folder: &str, uids: &[u32]) {
         if uids.is_empty() {
             return;
@@ -314,5 +330,16 @@ mod tests {
         assert_eq!(c.count("INBOX"), 2);
         c.check_validity("INBOX", Some(6));
         assert_eq!(c.count("INBOX"), 0);
+    }
+
+    #[test]
+    fn retain_range_only_touches_the_listed_window() {
+        let c = Cache::in_memory().unwrap();
+        c.put_summaries("INBOX", &[msg(1), msg(5), msg(6), msg(7), msg(9)]);
+        // Listed 5..=9 and found 5 and 9: 6 and 7 are gone, 1 (outside) stays.
+        c.retain_range("INBOX", 5, 9, &HashSet::from([5, 9]));
+        let mut left: Vec<u32> = c.latest("INBOX", 10).into_iter().map(|m| m.uid).collect();
+        left.sort();
+        assert_eq!(left, vec![1, 5, 9]);
     }
 }

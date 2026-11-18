@@ -154,8 +154,40 @@ pub struct Imap {
     conn: Slot,
     /// Background connection (prefetching bodies) so it never blocks the UI.
     bg: Slot,
+    /// Folder list and counts, so that upkeep never makes opening a message wait.
+    meta: Slot,
+    /// A folder listing is running: another request just gets the cached list.
+    folders_busy: std::sync::atomic::AtomicBool,
+    /// The last server search (folder + criteria, when, UIDs), reused by "load more".
+    search_memo: std::sync::Mutex<Option<(String, std::time::Instant, Vec<u32>)>>,
     /// role -> folder path, filled by list_folders.
     roles: std::sync::Mutex<HashMap<String, String>>,
+}
+
+/// How long a search result is reused for "load more" of the same search.
+const SEARCH_MEMO_TTL: Duration = Duration::from_secs(60);
+/// Server steps slower than this are logged (counts and timings only).
+const SLOW_STEP: Duration = Duration::from_secs(3);
+
+/// Message sequence numbers (first, last) for a page of a mailbox with `exists` messages.
+/// Sequence numbers run in UID order, so newest-first is counted from the end. This lets a
+/// plain listing ask for just one page instead of every UID in the mailbox.
+fn seq_window(exists: u32, offset: usize, limit: usize, oldest_first: bool) -> Option<(u32, u32)> {
+    let n = exists as usize;
+    if limit == 0 || offset >= n {
+        return None;
+    }
+    let count = limit.min(n - offset);
+    let (first, last) = if oldest_first { (offset + 1, offset + count) } else { (n - offset - count + 1, n - offset) };
+    Some((first as u32, last as u32))
+}
+
+/// Clears the "folder listing running" mark however the listing ends.
+struct BusyGuard<'a>(&'a std::sync::atomic::AtomicBool);
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 fn is_connection_error(e: &anyhow::Error) -> bool {
@@ -326,7 +358,17 @@ fn summary_from_fetch(f: &Fetch, folder: &str) -> Option<MessageSummary> {
 
 impl Imap {
     pub fn new(cfg: AccountConfig, creds: Credentials, cache: Arc<Cache>) -> Self {
-        Imap { cfg, creds, cache, conn: Default::default(), bg: Default::default(), roles: Default::default() }
+        Imap {
+            cfg,
+            creds,
+            cache,
+            conn: Default::default(),
+            bg: Default::default(),
+            meta: Default::default(),
+            folders_busy: Default::default(),
+            search_memo: Default::default(),
+            roles: Default::default(),
+        }
     }
 
     /// Verify credentials by opening the primary connection.
@@ -337,7 +379,7 @@ impl Imap {
     }
 
     pub async fn close(&self) {
-        for slot in [&self.conn, &self.bg] {
+        for slot in [&self.conn, &self.bg, &self.meta] {
             if let Some(mut c) = slot.lock().await.take() {
                 let _ = tokio::time::timeout(Duration::from_secs(3), c.session.logout()).await;
             }
@@ -349,6 +391,21 @@ impl Imap {
         F: for<'a> Fn(&'a mut Conn) -> BoxFuture<'a, Result<T>>,
     {
         self.run_on(&self.conn, f).await
+    }
+
+    /// `run_on`, logging the step if it was slow (including the wait for the connection),
+    /// so a log from a huge mailbox shows exactly what takes the time.
+    async fn run_timed<T, F>(&self, slot: &Slot, what: &str, folder: &str, f: F) -> Result<T>
+    where
+        F: for<'a> Fn(&'a mut Conn) -> BoxFuture<'a, Result<T>>,
+    {
+        let t = std::time::Instant::now();
+        let r = self.run_on(slot, f).await;
+        let took = t.elapsed();
+        if took >= SLOW_STEP {
+            crate::applog::log("slow", format!("{} account {}: {what} {folder} took {:.1} s", self.cfg.provider, self.cfg.id, took.as_secs_f32()));
+        }
+        r
     }
 
     /// Run an operation on a connection slot, reconnecting (once) if the connection dropped.
@@ -392,7 +449,7 @@ impl Imap {
     /// Forget open connections that may have died (sleep, network change); the next
     /// request reconnects. Connections busy right now are left alone.
     pub fn reset_connections(&self) {
-        for slot in [&self.conn, &self.bg] {
+        for slot in [&self.conn, &self.bg, &self.meta] {
             if let Ok(mut g) = slot.try_lock() {
                 *g = None;
             }
@@ -425,8 +482,17 @@ impl Imap {
     }
 
     pub async fn list_folders(&self) -> Result<Vec<Folder>> {
+        use std::sync::atomic::Ordering;
+        // One listing at a time: while one runs (slow on big Gmail accounts), others get the
+        // cached list instead of queueing more of the same work behind it.
+        if self.folders_busy.swap(true, Ordering::AcqRel) {
+            if let Some(f) = self.cached_folders() {
+                return Ok(f);
+            }
+        }
+        let _busy = BusyGuard(&self.folders_busy);
         let mut folders = self
-            .run(|c| {
+            .run_timed(&self.meta, "folder list", "", |c| {
                 Box::pin(async move {
                     let names: Vec<_> = c.session.list(Some(""), Some("*")).await?.try_collect().await?;
                     let mut out = Vec::new();
@@ -440,21 +506,14 @@ impl Imap {
                         let delim = n.delimiter().unwrap_or("/").to_string();
                         let segs: Vec<&str> = path.split(delim.as_str()).collect();
                         let role = role_for(&path, attrs).map(|s| s.to_string());
-                        let (mut unread, mut total) = (0, 0);
-                        if selectable {
-                            if let Ok(st) = c.session.status(&path, "(MESSAGES UNSEEN)").await {
-                                total = st.exists;
-                                unread = st.unseen.unwrap_or(0);
-                            }
-                        }
                         let system = role.is_some() || is_provider_folder(&path, &delim);
                         out.push(Folder {
                             account: String::new(),
                             name: mime::decode_mutf7(segs.last().copied().unwrap_or(&path)),
                             depth: segs.len().saturating_sub(1),
                             path,
-                            unread,
-                            total,
+                            unread: 0,
+                            total: 0,
                             selectable,
                             system,
                             role,
@@ -475,6 +534,35 @@ impl Imap {
             !matches!(f.role.as_deref(), Some("allmail" | "starred" | "important"))
                 && !(!f.selectable && (f.path.eq_ignore_ascii_case("[Gmail]") || f.path.eq_ignore_ascii_case("[Google Mail]")))
         });
+        // Counts only for the folders that are shown (not Gmail's hidden All Mail, Starred…).
+        let paths: Vec<String> = folders.iter().filter(|f| f.selectable).map(|f| f.path.clone()).collect();
+        let counts: HashMap<String, (u32, u32)> = match self
+            .run_timed(&self.meta, "folder counts", "", move |c| {
+                let paths = paths.clone();
+                Box::pin(async move {
+                    let mut out = HashMap::new();
+                    for p in paths {
+                        if let Ok(st) = c.session.status(&p, "(MESSAGES UNSEEN)").await {
+                            out.insert(p, (st.exists, st.unseen.unwrap_or(0)));
+                        }
+                    }
+                    Ok(out)
+                })
+            })
+            .await
+        {
+            Ok(c) => c,
+            // Keep the last known counts rather than showing zeros.
+            Err(e) if !e.to_string().starts_with("AUTH:") => {
+                self.cache.folders().unwrap_or_default().into_iter().map(|f| (f.path, (f.total, f.unread))).collect()
+            }
+            Err(e) => return Err(e),
+        };
+        for f in folders.iter_mut() {
+            if let Some(&(total, unread)) = counts.get(&f.path) {
+                (f.total, f.unread) = (total, unread);
+            }
+        }
         folders.sort_by(|a, b| {
             role_order(a.role.as_deref())
                 .cmp(&role_order(b.role.as_deref()))
@@ -601,51 +689,100 @@ impl Imap {
             search = format!("CHARSET UTF-8 {search}");
         }
 
+        // "Load more" of the same search reuses the UIDs found a moment ago.
+        let memo_key = format!("{real}\n{search}");
+        let memo: Option<Vec<u32>> = if plain_listing || offset == 0 {
+            None
+        } else {
+            match &*self.search_memo.lock().unwrap() {
+                Some((k, at, uids)) if *k == memo_key && at.elapsed() < SEARCH_MEMO_TTL => Some(uids.clone()),
+                _ => None,
+            }
+        };
         let cache = self.cache.clone();
-        let folder_label = folder.to_string();
         let real2 = real.clone();
-        let step = self.run(move |c| {
-            let (real, search, folder_label, cache) = (real.clone(), search.clone(), folder_label.clone(), cache.clone());
-            Box::pin(async move {
-                let mb = c.select(&real).await?;
-                cache.check_validity(&real, mb.uid_validity);
-                if mb.exists == 0 {
-                    if plain_listing {
-                        cache.retain(&real, &HashSet::new());
+        let what = if plain_listing { "list" } else { "search" };
+        let step = self
+            .run_timed(&self.conn, what, &real2, move |c| {
+                let (real, search, cache, memo) = (real.clone(), search.clone(), cache.clone(), memo.clone());
+                Box::pin(async move {
+                    let mb = c.select(&real).await?;
+                    cache.check_validity(&real, mb.uid_validity);
+                    if mb.exists == 0 {
+                        if plain_listing {
+                            cache.retain(&real, &HashSet::new());
+                        }
+                        return Ok(None);
                     }
-                    return Ok(None);
-                }
-                let found = c.session.uid_search(&search).await?;
-                if plain_listing {
-                    cache.retain(&real, &found);
-                }
-                let mut uids: Vec<u32> = found.into_iter().collect();
-                // UIDs grow with arrival: descending = newest first. Paging works the same either way.
-                if oldest_first {
-                    uids.sort_unstable();
-                } else {
-                    uids.sort_unstable_by(|a, b| b.cmp(a));
-                }
-                let total = uids.len();
-                let page: Vec<u32> = uids.into_iter().skip(offset).take(limit).collect();
-                if page.is_empty() {
-                    return Ok(Some((page, total, HashMap::new(), vec![])));
-                }
+                    // Flags the server just told us, by UID.
+                    let mut fresh_flags: HashMap<u32, (bool, bool, bool)> = HashMap::new();
+                    let mut found_now: Option<Vec<u32>> = None;
+                    let (page, total): (Vec<u32>, usize) = if plain_listing {
+                        // Just this page, by position: never the whole mailbox's UID list.
+                        let Some((first, last)) = seq_window(mb.exists, offset, limit, oldest_first) else {
+                            return Ok(Some((vec![], mb.exists as usize, HashMap::new(), vec![], None)));
+                        };
+                        let fetches: Vec<_> = c.session.fetch(format!("{first}:{last}"), "(UID FLAGS)").await?.try_collect().await?;
+                        for f in &fetches {
+                            if let Some(uid) = f.uid {
+                                fresh_flags.insert(uid, flags_of(f));
+                            }
+                        }
+                        let mut page: Vec<u32> = fresh_flags.keys().copied().collect();
+                        if oldest_first {
+                            page.sort_unstable();
+                        } else {
+                            page.sort_unstable_by(|a, b| b.cmp(a));
+                        }
+                        // Forget cached messages in this stretch that the server no longer has
+                        // (and, at either end of the mailbox, everything beyond it).
+                        if let (Some(&lo), Some(&hi)) = (page.iter().min(), page.iter().max()) {
+                            let keep: HashSet<u32> = page.iter().copied().collect();
+                            let at_newest = last >= mb.exists;
+                            let at_oldest = first <= 1;
+                            cache.retain_range(&real, if at_oldest { 0 } else { lo }, if at_newest { u32::MAX } else { hi }, &keep);
+                        }
+                        (page, mb.exists as usize)
+                    } else {
+                        let mut uids: Vec<u32> = match memo {
+                            Some(u) => u,
+                            None => {
+                                let u: Vec<u32> = c.session.uid_search(&search).await?.into_iter().collect();
+                                found_now = Some(u.clone());
+                                u
+                            }
+                        };
+                        // UIDs grow with arrival: descending = newest first.
+                        if oldest_first {
+                            uids.sort_unstable();
+                        } else {
+                            uids.sort_unstable_by(|a, b| b.cmp(a));
+                        }
+                        let total = uids.len();
+                        (uids.into_iter().skip(offset).take(limit).collect(), total)
+                    };
+                    if page.is_empty() {
+                        return Ok(Some((page, total, HashMap::new(), vec![], found_now)));
+                    }
 
-                let mut have = cache.summaries(&real, &page);
-                // Rows cached with an older preview are downloaded again (their preview improves).
-                have.retain(|_, m| m.preview_v >= PREVIEW_V);
-                let missing: Vec<u32> = page.iter().copied().filter(|u| !have.contains_key(u)).collect();
-                let known: Vec<u32> = page.iter().copied().filter(|u| have.contains_key(u)).collect();
+                    let mut have = cache.summaries(&real, &page);
+                    // Rows cached with an older preview are downloaded again (their preview improves).
+                    have.retain(|_, m| m.preview_v >= PREVIEW_V);
+                    let missing: Vec<u32> = page.iter().copied().filter(|u| !have.contains_key(u)).collect();
+                    let known: Vec<u32> = page.iter().copied().filter(|u| have.contains_key(u)).collect();
 
-                // Refresh flags of already-cached messages (cheap).
-                if !known.is_empty() {
-                    let fetches: Vec<_> = c.session.uid_fetch(uid_set(&known), "(UID FLAGS)").await?.try_collect().await?;
+                    // Refresh flags of already-cached messages (a plain listing already has them).
+                    if !known.is_empty() && !plain_listing {
+                        let fetches: Vec<_> = c.session.uid_fetch(uid_set(&known), "(UID FLAGS)").await?.try_collect().await?;
+                        for f in &fetches {
+                            if let Some(uid) = f.uid {
+                                fresh_flags.insert(uid, flags_of(f));
+                            }
+                        }
+                    }
                     let mut changed = vec![];
-                    for f in &fetches {
-                        let Some(uid) = f.uid else { continue };
-                        if let Some(m) = have.get_mut(&uid) {
-                            let (s, fl, a) = flags_of(f);
+                    for (uid, m) in have.iter_mut() {
+                        if let Some(&(s, fl, a)) = fresh_flags.get(uid) {
                             if (m.seen, m.flagged, m.answered) != (s, fl, a) {
                                 (m.seen, m.flagged, m.answered) = (s, fl, a);
                                 changed.push(m.clone());
@@ -653,33 +790,34 @@ impl Imap {
                         }
                     }
                     cache.put_summaries(&real, &changed);
-                }
-                // One-time backfill: summaries cached before conversations existed lack the
-                // threading headers. Fetch just the header block for those (a few KB each).
-                let stale: Vec<u32> = known.iter().copied().filter(|u| have.get(u).map(|m| m.thread_v == 0).unwrap_or(false)).collect();
-                if !stale.is_empty() {
-                    let fetches: Vec<_> = c.session.uid_fetch(uid_set(&stale), "(UID BODY.PEEK[HEADER])").await?.try_collect().await?;
-                    let mut fixed = vec![];
-                    for f in &fetches {
-                        let (Some(uid), Some(h)) = (f.uid, f.header()) else { continue };
-                        if let (Some(m), Some(p)) = (have.get_mut(&uid), mime::parse(h)) {
-                            (m.message_id, m.in_reply_to, m.references) = mime::thread_ids(&p);
-                            m.thread_v = 1;
-                            fixed.push(m.clone());
+                    // One-time backfill: summaries cached before conversations existed lack the
+                    // threading headers. Fetch just the header block for those (a few KB each).
+                    let stale: Vec<u32> = known.iter().copied().filter(|u| have.get(u).map(|m| m.thread_v == 0).unwrap_or(false)).collect();
+                    if !stale.is_empty() {
+                        let fetches: Vec<_> = c.session.uid_fetch(uid_set(&stale), "(UID BODY.PEEK[HEADER])").await?.try_collect().await?;
+                        let mut fixed = vec![];
+                        for f in &fetches {
+                            let (Some(uid), Some(h)) = (f.uid, f.header()) else { continue };
+                            if let (Some(m), Some(p)) = (have.get_mut(&uid), mime::parse(h)) {
+                                (m.message_id, m.in_reply_to, m.references) = mime::thread_ids(&p);
+                                m.thread_v = 1;
+                                fixed.push(m.clone());
+                            }
                         }
+                        cache.put_summaries(&real, &fixed);
                     }
-                    cache.put_summaries(&real, &fixed);
-                }
-                let _ = &folder_label;
-                Ok(Some((page, total, have, missing)))
+                    Ok(Some((page, total, have, missing, found_now)))
+                })
             })
-        })
-        .await;
-        let (page, total, mut have, missing) = match step {
+            .await;
+        let (page, total, mut have, missing, found_now) = match step {
             Ok(Some(x)) => x,
             Ok(None) => return Ok(MessagePage { messages: vec![], total: 0, has_more: false }),
             Err(e) => return Err(e),
         };
+        if let Some(uids) = found_now {
+            *self.search_memo.lock().unwrap() = Some((memo_key, std::time::Instant::now(), uids));
+        }
         // Download summaries only for messages we haven't seen before.
         if !missing.is_empty() {
             for m in self.fetch_summaries(&real2, &missing).await? {
@@ -880,7 +1018,7 @@ impl Imap {
     async fn fetch_raw(&self, folder: &str, uid: u32) -> Result<(Vec<u8>, bool, bool)> {
         let folder_s = folder.to_string();
         let (raw, seen, flagged) = self
-            .run(move |c| {
+            .run_timed(&self.conn, "open message", folder, move |c| {
                 let folder = folder_s.clone();
                 Box::pin(async move {
                     c.ensure_selected(&folder).await?;
@@ -1262,18 +1400,7 @@ impl Imap {
             let _ = self.list_folders().await;
         }
         let Some(path) = self.role_path(role) else { return Ok(0) };
-        let f = path.clone();
-        let mut uids: Vec<u32> = self
-            .run_on(&self.bg, move |c| {
-                let f = f.clone();
-                Box::pin(async move {
-                    c.select(&f).await?;
-                    Ok(c.session.uid_search("ALL").await?.into_iter().collect())
-                })
-            })
-            .await?;
-        uids.sort_unstable_by(|a, b| b.cmp(a));
-        uids.truncate(limit);
+        let uids = self.newest_uids(&self.bg, &path, limit).await?;
         let have = self.cache.summaries(&path, &uids);
         let missing: Vec<u32> = uids.into_iter().filter(|u| !have.contains_key(u)).collect();
         for chunk in missing.chunks(50) {
@@ -1293,24 +1420,32 @@ impl Imap {
         Ok(missing.len())
     }
 
+    /// UIDs of the newest `n` messages in `folder`, newest first. Asks for just those by
+    /// position (not every UID in the folder, which is huge on big mailboxes).
+    async fn newest_uids(&self, slot: &Slot, folder: &str, n: usize) -> Result<Vec<u32>> {
+        let f = folder.to_string();
+        let mut uids: Vec<u32> = self
+            .run_timed(slot, "newest", folder, move |c| {
+                let f = f.clone();
+                Box::pin(async move {
+                    let mb = c.select(&f).await?;
+                    let Some((first, last)) = seq_window(mb.exists, 0, n, false) else { return Ok(vec![]) };
+                    let fetches: Vec<_> = c.session.fetch(format!("{first}:{last}"), "(UID)").await?.try_collect().await?;
+                    Ok(fetches.iter().filter_map(|x| x.uid).collect())
+                })
+            })
+            .await?;
+        uids.sort_unstable_by(|a, b| b.cmp(a));
+        Ok(uids)
+    }
+
     /// The sender name on the account's own Sent mail (newest first), if any.
     pub async fn sent_name(&self) -> Result<Option<String>> {
         if self.roles.lock().unwrap().is_empty() {
             let _ = self.list_folders().await;
         }
         let Some(sent) = self.role_path("sent") else { return Ok(None) };
-        let f = sent.clone();
-        let mut uids: Vec<u32> = self
-            .run(move |c| {
-                let f = f.clone();
-                Box::pin(async move {
-                    c.select(&f).await?;
-                    Ok(c.session.uid_search("ALL").await?.into_iter().collect())
-                })
-            })
-            .await?;
-        uids.sort_unstable_by(|a, b| b.cmp(a));
-        uids.truncate(30);
+        let uids = self.newest_uids(&self.conn, &sent, 30).await?;
         if uids.is_empty() {
             return Ok(None);
         }
@@ -1505,5 +1640,21 @@ mod structure_tests {
         let Response::Fetch(_, attrs) = r else { panic!("not a fetch") };
         let b = attrs.iter().find_map(|a| if let AttributeValue::BodyStructure(b) = a { Some(b) } else { None }).unwrap();
         assert_eq!(structure_attachments(b), vec!["pass.pdf".to_string()]);
+    }
+
+    #[test]
+    fn seq_window_pages_by_position() {
+        // Newest first: the last 50 of 420,000, then the 50 before them.
+        assert_eq!(seq_window(420_000, 0, 50, false), Some((419_951, 420_000)));
+        assert_eq!(seq_window(420_000, 50, 50, false), Some((419_901, 419_950)));
+        // Last, partial page, and past the end.
+        assert_eq!(seq_window(120, 100, 50, false), Some((1, 20)));
+        assert_eq!(seq_window(120, 120, 50, false), None);
+        // Fewer messages than a page.
+        assert_eq!(seq_window(7, 0, 50, false), Some((1, 7)));
+        // Oldest first.
+        assert_eq!(seq_window(120, 0, 50, true), Some((1, 50)));
+        assert_eq!(seq_window(120, 100, 50, true), Some((101, 120)));
+        assert_eq!(seq_window(0, 0, 50, false), None);
     }
 }

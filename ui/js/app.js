@@ -3402,7 +3402,7 @@ $("list-resizer").addEventListener("mousedown", (e) => {
 let refreshing = false;
 /** Settle within `ms` no matter what (a stuck network call must not block refreshing). */
 const withTimeout = (p, ms, what) =>
-  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out`)), ms))]);
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms))]);
 
 let refreshStarted = 0;
 async function refreshAll(manual = false, force = false) {

@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "pearmail"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-imap",

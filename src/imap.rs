@@ -1576,18 +1576,28 @@ where
     // Servers drop IDLE after ~30 min, but home routers often forget idle connections
     // after 5-10, silently. Re-issue IDLE well before that, and put a time limit on every
     // step so a dead connection is noticed and replaced instead of hanging forever.
-    const IDLE_FOR: Duration = Duration::from_secs(9 * 60);
+    const IDLE_FOR: Duration = Duration::from_secs(5 * 60);
+    // Log in afresh this often. A connection that's already signed in keeps working after
+    // the password is revoked (iCloud app passwords, revoked Google/Microsoft access), so
+    // only a new login notices; then the sign-in banner shows without a relaunch.
+    const RELOGIN_EVERY: Duration = Duration::from_secs(5 * 60);
     const STEP: Duration = Duration::from_secs(30);
     let who = format!("{} account {}", cfg.provider, cfg.id);
     let mut failures = 0u32;
+    // The previous session was closed on purpose (fresh login), not lost.
+    let mut recycled = false;
     loop {
         let res: Result<()> = async {
             let mut session = connect(&cfg, &creds).await?;
+            let opened = std::time::Instant::now();
             timeout(STEP, session.select("INBOX")).await.map_err(|_| anyhow!("timed out opening INBOX"))??;
-            crate::applog::log("idle", format!("{who}: watching INBOX"));
             failures = 0;
-            // Catch up on anything that arrived while we weren't connected.
-            notify();
+            if !recycled {
+                crate::applog::log("idle", format!("{who}: watching INBOX"));
+                // Catch up on anything that arrived while we weren't connected.
+                notify();
+            }
+            recycled = false;
             loop {
                 let mut idle = session.idle();
                 timeout(STEP, idle.init()).await.map_err(|_| anyhow!("timed out starting IDLE"))??;
@@ -1600,9 +1610,17 @@ where
                     crate::applog::log("idle", format!("{who}: new data"));
                     notify();
                 }
+                if opened.elapsed() >= RELOGIN_EVERY {
+                    let _ = timeout(Duration::from_secs(3), session.logout()).await;
+                    recycled = true;
+                    return Ok(());
+                }
             }
         }
         .await;
+        if res.is_ok() {
+            continue; // planned fresh login: reconnect right away
+        }
         if let Err(e) = res {
             if e.to_string().starts_with("AUTH:") {
                 // The password or sign-in no longer works: tell the UI, stop retrying.
@@ -1612,6 +1630,7 @@ where
             }
             crate::applog::log("idle", format!("{who}: watcher stopped: {e:#}"));
         }
+        recycled = false; // the next connection catches up on what was missed
         failures += 1;
         // Reconnect quickly the first time (a blip), then back off.
         tokio::time::sleep(Duration::from_secs(if failures == 1 { 5 } else { 30 })).await;

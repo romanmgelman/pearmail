@@ -115,8 +115,23 @@ pub async fn send(cfg: &AccountConfig, creds: &Credentials, msg: Message) -> Res
         }
     };
     let transport = builder.build();
-    transport.send(msg).await.with_context(|| format!("{host} could not send this message"))?;
+    if let Err(e) = transport.send(msg).await {
+        // The server turned down the password or token: that's a sign-in problem (shows the
+        // "Sign in again" banner), not a problem with this message.
+        if e.is_permanent() && e.status().is_some_and(|c| is_auth_rejection(&c.to_string())) {
+            match creds.secret {
+                Secret::Password(_) => anyhow::bail!("AUTH: The email address or app password for {} is incorrect.", creds.email),
+                Secret::OAuth(_) => anyhow::bail!("AUTH: {} needs to be signed in again.", creds.email),
+            }
+        }
+        return Err(anyhow::Error::new(e).context(format!("{host} could not send this message")));
+    }
     Ok(())
+}
+
+/// SMTP reply codes meaning "authentication required / too weak / failed".
+fn is_auth_rejection(code: &str) -> bool {
+    matches!(code, "530" | "534" | "535")
 }
 
 #[cfg(test)]
@@ -168,5 +183,14 @@ mod tests {
         // What actually goes out never carries Bcc.
         let (sent, _) = build("me@icloud.com", "Me", &m, false, None).unwrap();
         assert!(!String::from_utf8(sent.formatted()).unwrap().contains("secret@example.com"));
+    }
+
+    #[test]
+    fn recognizes_sign_in_rejections() {
+        assert!(is_auth_rejection("535"));
+        assert!(is_auth_rejection("534"));
+        assert!(is_auth_rejection("530"));
+        assert!(!is_auth_rejection("550")); // mailbox unavailable: a problem with the message
+        assert!(!is_auth_rejection("421")); // try again later
     }
 }

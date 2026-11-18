@@ -594,7 +594,7 @@ async fn sent_or_drafts(imap: &Imap, role: &str, fallback: &str) -> String {
 
 #[tauri::command]
 /// Returns the Message-ID, so the app can show the sent message right away and match it later.
-pub async fn send_message(state: State<'_, AppState>, account: Option<String>, message: OutgoingMessage) -> CmdResult<String> {
+pub async fn send_message(app: AppHandle, state: State<'_, AppState>, account: Option<String>, message: OutgoingMessage) -> CmdResult<String> {
     let rt = state.acct(&account)?;
     let cfg = rt.cfg.lock().unwrap().clone();
     let imap = rt.imap.clone();
@@ -602,7 +602,13 @@ pub async fn send_message(state: State<'_, AppState>, account: Option<String>, m
     let (msg, mid) = smtp::build(&cfg.email, &sender, &message, false, None).map_err(err)?;
     // Same Message-ID on the copy kept in Sent as on what recipients get (threading).
     let (sent_copy, _) = smtp::build(&cfg.email, &sender, &message, true, Some(&mid)).map_err(err)?;
-    smtp::send(&cfg, &imap.creds, msg).await.map_err(err)?;
+    if let Err(e) = smtp::send(&cfg, &imap.creds, msg).await {
+        // Password or token turned down: show the "Sign in again" banner right away.
+        if e.to_string().starts_with("AUTH:") {
+            let _ = app.emit("auth-required", cfg.id.clone());
+        }
+        return Err(err(e));
+    }
     // Gmail and Outlook file sent mail themselves; others need a copy in Sent.
     if !cfg.saves_sent {
         let sent = sent_or_drafts(&imap, "sent", "Sent Messages").await;

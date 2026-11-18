@@ -3772,13 +3772,49 @@ function markNeedsAuth(id) {
   toast(`${a.email} needs you to sign in again.`, { error: true, duration: 8000, action: { label: "Sign In", run: () => signInAgain(id) } });
 }
 
+/**
+ * Show exactly `items` ([{ key, html }]) in a banner host. New banners grow into place and
+ * departing ones shrink away (like a sidebar section); banners already shown are updated in
+ * place without replaying their animation.
+ */
+function syncBanners(host, items) {
+  const want = new Map(items.map((i) => [i.key, i.html]));
+  const now = new Map([...host.children].filter((w) => !w.classList.contains("leaving")).map((w) => [w.dataset.key, w]));
+  for (const [key, w] of now) {
+    if (want.has(key)) continue;
+    if (reduceMotion()) { w.remove(); continue; }
+    w.classList.add("leaving");
+    w.classList.remove("open");
+    const done = () => w.remove();
+    w.addEventListener("transitionend", (e) => e.target === w && e.propertyName === "grid-template-rows" && done());
+    setTimeout(done, 400);
+  }
+  for (const [key, html] of want) {
+    const w = now.get(key);
+    if (w) {
+      if (w._html !== html) { w.firstElementChild.innerHTML = html; w._html = html; }
+      continue;
+    }
+    const nw = document.createElement("div");
+    nw.className = "banner-wrap";
+    nw.dataset.key = key;
+    nw.innerHTML = `<div class="banner-inner">${html}</div>`;
+    nw._html = html;
+    host.appendChild(nw);
+    if (reduceMotion()) nw.classList.add("open");
+    else { void nw.offsetHeight; requestAnimationFrame(() => nw.classList.add("open")); }
+  }
+}
+
 function renderAuthBanners() {
-  const host = $("auth-banners");
   const list = [...state.needsAuth].map(acctById).filter(Boolean);
-  host.hidden = !list.length;
-  host.innerHTML = list
-    .map((a) => `<div class="auth-banner"><div class="ab-icon">${icon("person")}</div><div class="ab-text"><div class="ab-title">Sign in to keep getting mail</div><div class="ab-sub" title="${esc(a.email)}">${esc(a.email)}</div></div><button data-reauth="${esc(a.id)}">Sign In</button></div>`)
-    .join("");
+  syncBanners(
+    $("auth-banners"),
+    list.map((a) => ({
+      key: a.id,
+      html: `<div class="auth-banner"><div class="ab-icon">${icon("person")}</div><div class="ab-text"><div class="ab-title">Sign in to keep getting mail</div><div class="ab-sub" title="${esc(a.email)}">${esc(a.email)}</div></div><button data-reauth="${esc(a.id)}">Sign In</button></div>`,
+    })),
+  );
 }
 
 let reauthBusy = false;
@@ -3841,12 +3877,11 @@ function checkForUpdates(manual = false) {
 function renderUpdateBanner(st) {
   const host = $("update-banner");
   const r = st?.ready;
-  host.hidden = !r;
-  if (!r) { host.innerHTML = ""; return; }
+  if (!r) return syncBanners(host, []);
   const btn = st.canApply ? `<button data-upd="restart">Restart</button>` : `<button data-upd="download">Download</button>`;
   const sub = st.canApply ? `<a data-upd="notes">What's new</a>` : `Can't update this copy in place. <a data-upd="notes">Download it</a>`;
-  host.innerHTML = `<div class="auth-banner update"><div class="ab-icon">${icon("download")}</div><div class="ab-text"><div class="ab-title">Pear Mail ${esc(r.version)} is ready</div><div class="ab-sub">${sub}</div></div>${btn}</div>`;
   host.dataset.notes = r.notesUrl;
+  syncBanners(host, [{ key: "update", html: `<div class="auth-banner update"><div class="ab-icon">${icon("download")}</div><div class="ab-text"><div class="ab-title">Pear Mail ${esc(r.version)} is ready</div><div class="ab-sub">${sub}</div></div>${btn}</div>` }]);
 }
 
 $("update-banner").addEventListener("click", async (e) => {

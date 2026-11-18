@@ -34,6 +34,8 @@ Pear Mail brings the clean three-pane layout of iCloud Mail to the Windows deskt
 2. Run it. No installer is needed. It requires the WebView2 runtime, which ships with Windows 11 and most Windows 10 PCs.
 3. Add an account from the **⋯** menu at the bottom left → **Add Account…**
 
+From version 0.1.6 on, Pear Mail updates itself: new versions download in the background and install when you click **Restart** (or the next time you quit). Each update is checked against the developer's signature first. You can turn this off in **Settings → Updates**.
+
 > [!NOTE]
 > The executable isn't code-signed yet, so Windows SmartScreen may warn on first launch. Choose **More info → Run anyway**, or [build it yourself](#build-from-source).
 

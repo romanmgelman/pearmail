@@ -702,6 +702,14 @@ body.dragging-reorder, body.dragging-reorder * { cursor: grabbing !important; us
 .auth-banner .ab-sub { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-banner button { flex: none; border: 0; border-radius: 7px; background: #c4161c; color: #fff; font-weight: 600; font-size: 12px; height: 26px; padding: 0 12px; cursor: pointer; }
 .auth-banner button:hover { background: #a91217; }
+/* ===== Update ready ===== */
+#update-banner { margin: 0 0 10px; }
+#update-banner[hidden] { display: none; }
+.auth-banner.update { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent); }
+.auth-banner.update .ab-icon, .auth-banner.update button { background: var(--accent); }
+.auth-banner.update button:hover { filter: brightness(0.92); background: var(--accent); }
+.auth-banner.update .ab-sub a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.auth-banner.update .ab-sub a:hover { text-decoration: underline; }
 .auth-warn {
   width: 18px; height: 18px; border-radius: 50%; border: 0; background: #c4161c; color: #fff; font-weight: 800; font-size: 12px;
   line-height: 18px; padding: 0; margin-right: 4px; cursor: pointer; flex: none;

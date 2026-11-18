@@ -962,6 +962,32 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+/// Current version and any downloaded, verified update.
+#[tauri::command]
+pub fn update_status() -> crate::updater::UpdateStatus {
+    crate::updater::status()
+}
+
+/// Look for a newer release on GitHub and download + verify it in the background.
+#[tauri::command]
+pub async fn check_for_update() -> CmdResult<crate::updater::UpdateStatus> {
+    crate::updater::check_and_download().await.map_err(|e| {
+        crate::applog::log("update", format!("check failed: {e:#}"));
+        "Couldn't check for updates. Try again later.".to_string()
+    })
+}
+
+/// Install the downloaded update and start it.
+#[tauri::command]
+pub fn restart_to_update(app: AppHandle) -> CmdResult<()> {
+    crate::updater::apply_and_relaunch().map_err(|e| {
+        crate::applog::log("update", format!("install failed: {e:#}"));
+        format!("Couldn't install the update: {e}")
+    })?;
+    app.exit(0);
+    Ok(())
+}
+
 /// Whether this launch should stay in the notification area (Windows sign-in, background mode).
 #[tauri::command]
 pub fn started_hidden(state: State<'_, AppState>) -> bool {

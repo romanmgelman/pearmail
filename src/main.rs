@@ -15,8 +15,18 @@ mod oauth;
 mod providers;
 mod smtp;
 mod startup;
+mod updater;
 
 fn main() {
+    // Started by "Restart to Update": let the old version finish closing first.
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if let Some(pid) = argv.iter().position(|a| a == "--after-update").and_then(|i| argv.get(i + 1)).and_then(|p| p.parse().ok()) {
+            updater::wait_for_previous(pid);
+        }
+    }
+    // Remove the previous version's exe and old downloads.
+    updater::cleanup();
     // Let Windows show notifications as "Pear Mail" with our icon (not PowerShell).
     notify::register();
     // Started at Windows sign-in with "open in the background": keep the window hidden.
@@ -43,7 +53,7 @@ It should show the Pear Mail name and icon.", || {});
         let report = tauri::async_runtime::block_on(async {
             let Some((cfg, creds)) = first_account() else { return "no saved account".to_string() };
             let imap = imap::Imap::new(cfg, creds, std::sync::Arc::new(cache::Cache::in_memory().expect("cache")));
-            let page = match imap.list_messages("INBOX", "all", "", &[], 0, 200).await { Ok(p) => p, Err(e) => return format!("list error {e:#}") };
+            let page = match imap.list_messages("INBOX", "all", "", &[], 0, 200, false).await { Ok(p) => p, Err(e) => return format!("list error {e:#}") };
             let with_thread: Vec<_> = page.messages.iter().filter(|m| m.thread_v == 1 && (!m.in_reply_to.is_empty() || !m.references.is_empty())).collect();
             let mut r = format!("inbox: {} messages, {} are replies (have In-Reply-To/References)
 ", page.messages.len(), with_thread.len());
@@ -80,7 +90,7 @@ It should show the Pear Mail name and icon.", || {});
                 // How many multi-message conversations exist among recent Inbox + Sent mail?
                 let sent = folders.iter().find(|f| f.role.as_deref() == Some("sent")).map(|f| f.path.clone());
                 let mut all = page.messages.clone();
-                if let Some(s) = sent { if let Ok(p) = imap.list_messages(&s, "all", "", &[], 0, 200).await { all.extend(p.messages); } }
+                if let Some(s) = sent { if let Ok(p) = imap.list_messages(&s, "all", "", &[], 0, 200, false).await { all.extend(p.messages); } }
                 let mut parent: std::collections::HashMap<String, String> = Default::default();
                 fn find(p: &mut std::collections::HashMap<String, String>, x: &str) -> String { let mut x = x.to_string(); while let Some(y) = p.get(&x).cloned() { if y == x { break; } x = y; } x }
                 for m in &all { let ids: Vec<String> = std::iter::once(m.message_id.clone()).chain(std::iter::once(m.in_reply_to.clone())).chain(m.references.iter().cloned()).filter(|s| !s.is_empty()).collect(); if let Some(a) = ids.first() { for b in &ids[1..] { let (ra, rb) = (find(&mut parent, a), find(&mut parent, b)); if ra != rb { parent.insert(rb, ra); } } } }
@@ -146,6 +156,18 @@ It should show the Pear Mail name and icon.", || {});
         let out = args.get(3).cloned().unwrap_or_else(|| "pearmail-inspect.txt".into());
         let report = tauri::async_runtime::block_on(inspect(&who));
         let _ = std::fs::write(out, report);
+        return;
+    }
+    // Updater end-to-end test: check (PEARMAIL_UPDATE_URL), download, verify, install, relaunch.
+    if args.get(1).map(|s| s.as_str()) == Some("--update-selftest") {
+        match tauri::async_runtime::block_on(updater::check_and_download()) {
+            Ok(st) if st.ready.is_some() => match updater::apply_and_relaunch() {
+                Ok(()) => applog::log("update", "selftest: installed and relaunched"),
+                Err(e) => applog::log("update", format!("selftest: install failed: {e:#}")),
+            },
+            Ok(_) => applog::log("update", "selftest: no update offered"),
+            Err(e) => applog::log("update", format!("selftest: {e:#}")),
+        }
         return;
     }
     if args.get(1).map(|s| s.as_str()) == Some("--diagnose") {
@@ -240,9 +262,18 @@ It should show the Pear Mail name and icon.", || {});
             commands::started_hidden,
             commands::get_open_at_login,
             commands::set_open_at_login,
+            commands::update_status,
+            commands::check_for_update,
+            commands::restart_to_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Pear Mail");
+        .build(tauri::generate_context!())
+        .expect("error while running Pear Mail")
+        .run(|_app, e| {
+            // Quitting with a downloaded update: install it so the next launch is the new version.
+            if let tauri::RunEvent::Exit = e {
+                updater::apply_on_exit();
+            }
+        });
 }
 
 /// "Windows 11 build 26100" style description for the diagnostic log.
@@ -279,7 +310,7 @@ async fn diagnose() -> String {
     }
     for folder in paths.iter() {
         let (folder, limit) = (folder.as_str(), 300);
-        match imap.list_messages(folder, "all", "", &[], 0, limit).await {
+        match imap.list_messages(folder, "all", "", &[], 0, limit, false).await {
             Ok(p) => {
                 let _ = writeln!(r, "list {folder} limit {limit}: ok, {} messages, total {}", p.messages.len(), p.total);
             }
@@ -300,7 +331,7 @@ async fn inspect(who: &str) -> String {
     let Some((cfg, creds)) = first_account() else { return "no saved account".into() };
     let cache = std::sync::Arc::new(cache::Cache::in_memory().expect("cache"));
     let imap = imap::Imap::new(cfg, creds, cache);
-    let page = match imap.list_messages("INBOX", "all", "", &[], 0, 200).await {
+    let page = match imap.list_messages("INBOX", "all", "", &[], 0, 200, false).await {
         Ok(p) => p,
         Err(e) => return format!("list error: {e:#}"),
     };

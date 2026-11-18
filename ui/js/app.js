@@ -76,6 +76,7 @@ const DEFAULTS = {
   undoSendDelay: 10, // seconds a sent message waits so it can be taken back (0 = off)
   notifications: true,
   runInBackground: false, // closing the window keeps Pear Mail in the notification area
+  autoUpdate: true, // look for new versions on GitHub (and download them, verified) once a day
   trayNoticeShown: false, // the one-time "running in the background" toast
   zoom: 100,
   signature: "",
@@ -3193,12 +3194,16 @@ async function openSettings() {
     <div class="set-sec">Notifications</div>
     ${toggle("notifications", "Notify me about new mail", settings.notifications, "Shown when Pear Mail isn't in the foreground.")}
     ${toggle("runInBackground", "Keep running in the background", settings.runInBackground, "When the window is closed, Pear Mail stays in the notification area and keeps notifying you. Right-click its icon to exit.")}
+    <div class="set-sec">Updates</div>
+    ${toggle("autoUpdate", "Check for updates automatically", settings.autoUpdate, "Once a day, from Pear Mail's GitHub releases. Updates are checked for a valid signature before they're installed.")}
+    <div class="set-row"><span><span class="tl">Version</span><span class="th upd-version">Pear Mail</span></span><button class="btn" data-act="check-updates">Check Now</button></div>
     <div class="set-sec">Troubleshooting</div>
     <div class="set-row"><span><span class="tl">Diagnostic log</span><span class="th">If something isn't working, send this file to whoever gave you Pear Mail. It has no email content or passwords.</span></span><button class="btn" data-act="show-log">Show Log File</button></div>
     <div class="actions"><button class="btn" data-act="cancel">Cancel</button><span class="spacer"></span><button class="btn" data-act="save">Save</button><button class="btn primary" data-act="done">Done</button></div>
   </div>`;
   document.body.appendChild(back);
   applySettings(); // sync the Automatic / Dark Mode switches
+  api.updateStatus().then((st) => { const v = back.querySelector(".upd-version"); if (v) v.textContent = `Pear Mail ${st.current}`; }).catch(() => {});
   // Open at sign-in lives in the Windows registry (the source of truth), not in settings.
   const startupEl = back.querySelector('[name="openAtLogin"]');
   const modeRow = back.querySelector(".startup-mode");
@@ -3262,6 +3267,12 @@ async function openSettings() {
     if (rm) return removeAccount(rm.dataset.remove);
     if (e.target.closest('[data-act="add-account"]')) { close().then(addAccount); }
     if (e.target.closest('[data-act="show-log"]')) api.showLogFile().catch(handleError);
+    const chk = e.target.closest('[data-act="check-updates"]');
+    if (chk && !chk.disabled) {
+      chk.disabled = true;
+      chk.textContent = "Checking…";
+      checkForUpdates(true).finally(() => { chk.disabled = false; chk.textContent = "Check Now"; });
+    }
   });
   const setRunInBackgroundSwitch = (on) => {
     const el = back.querySelector('[name="runInBackground"]');
@@ -3807,3 +3818,52 @@ document.addEventListener("click", (e) => {
 
 // The background new-mail watcher found that an account's sign-in no longer works.
 listen("auth-required", (e) => markNeedsAuth(e.payload));
+
+// ===== Updates (from GitHub releases; the app verifies the signature) =====
+let updateChecking = null;
+function checkForUpdates(manual = false) {
+  if (updateChecking) return updateChecking;
+  updateChecking = (async () => {
+    try {
+      const st = await api.checkForUpdate();
+      renderUpdateBanner(st);
+      if (manual && !st.ready) toast(`Pear Mail ${st.current} is up to date.`);
+      if (manual && st.ready) toast(`Pear Mail ${st.ready.version} is ready to install.`);
+    } catch (e) {
+      if (manual) toast(errText(e), { error: true });
+    } finally {
+      updateChecking = null;
+    }
+  })();
+  return updateChecking;
+}
+
+function renderUpdateBanner(st) {
+  const host = $("update-banner");
+  const r = st?.ready;
+  host.hidden = !r;
+  if (!r) { host.innerHTML = ""; return; }
+  const btn = st.canApply ? `<button data-upd="restart">Restart</button>` : `<button data-upd="download">Download</button>`;
+  const sub = st.canApply ? `<a data-upd="notes">What's new</a>` : `Can't update this copy in place. <a data-upd="notes">Download it</a>`;
+  host.innerHTML = `<div class="auth-banner update"><div class="ab-icon">${icon("download")}</div><div class="ab-text"><div class="ab-title">Pear Mail ${esc(r.version)} is ready</div><div class="ab-sub">${sub}</div></div>${btn}</div>`;
+  host.dataset.notes = r.notesUrl;
+}
+
+$("update-banner").addEventListener("click", async (e) => {
+  const act = e.target.closest("[data-upd]")?.dataset.upd;
+  if (!act) return;
+  e.preventDefault();
+  if (act === "notes" || act === "download") return openUrl($("update-banner").dataset.notes);
+  if (composeOpen()) return toast("Send or close the message you're writing, then restart to update.", { duration: 6000 });
+  try {
+    // Like quitting: apply pending moves/deletes and send anything waiting in the outbox.
+    if (undoStack.length) await commitPending();
+    await composeMod?.flushPendingSend?.();
+    await api.restartToUpdate();
+  } catch (err) {
+    toast(errText(err), { error: true, duration: 8000 });
+  }
+});
+
+setTimeout(() => { if (settings.autoUpdate) checkForUpdates(); }, 30000);
+setInterval(() => { if (settings.autoUpdate) checkForUpdates(); }, 24 * 3600 * 1000);

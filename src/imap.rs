@@ -160,6 +160,8 @@ pub struct Imap {
     folders_busy: std::sync::atomic::AtomicBool,
     /// The last server search (folder + criteria, when, UIDs), reused by "load more".
     search_memo: std::sync::Mutex<Option<(String, std::time::Instant, Vec<u32>)>>,
+    /// Counts conversation lookups: an older one stops when a newer one starts.
+    thread_gen: std::sync::atomic::AtomicU64,
     /// role -> folder path, filled by list_folders.
     roles: std::sync::Mutex<HashMap<String, String>>,
 }
@@ -367,6 +369,7 @@ impl Imap {
             meta: Default::default(),
             folders_busy: Default::default(),
             search_memo: Default::default(),
+            thread_gen: Default::default(),
             roles: Default::default(),
         }
     }
@@ -400,10 +403,22 @@ impl Imap {
         F: for<'a> Fn(&'a mut Conn) -> BoxFuture<'a, Result<T>>,
     {
         let t = std::time::Instant::now();
-        let r = self.run_on(slot, f).await;
+        let mut waited = Duration::ZERO;
+        let r = self.run_on_inner(slot, f, &mut waited).await;
         let took = t.elapsed();
         if took >= SLOW_STEP {
-            crate::applog::log("slow", format!("{} account {}: {what} {folder} took {:.1} s", self.cfg.provider, self.cfg.id, took.as_secs_f32()));
+            let work = took.saturating_sub(waited);
+            crate::applog::log(
+                "slow",
+                format!(
+                    "{} account {}: {what} {folder} took {:.1} s ({:.1} s waiting for the connection, {:.1} s on the server)",
+                    self.cfg.provider,
+                    self.cfg.id,
+                    took.as_secs_f32(),
+                    waited.as_secs_f32(),
+                    work.as_secs_f32()
+                ),
+            );
         }
         r
     }
@@ -413,7 +428,18 @@ impl Imap {
     where
         F: for<'a> Fn(&'a mut Conn) -> BoxFuture<'a, Result<T>>,
     {
+        let mut waited = Duration::ZERO;
+        self.run_on_inner(slot, f, &mut waited).await
+    }
+
+    /// `run_on`, also telling how long it waited for the connection to be free.
+    async fn run_on_inner<T, F>(&self, slot: &Slot, f: F, waited: &mut Duration) -> Result<T>
+    where
+        F: for<'a> Fn(&'a mut Conn) -> BoxFuture<'a, Result<T>>,
+    {
+        let t0 = std::time::Instant::now();
         let mut guard = slot.lock().await;
+        *waited = t0.elapsed();
         for attempt in 0..2 {
             if guard.is_none() {
                 let s = connect(&self.cfg, &self.creds).await?;
@@ -1300,6 +1326,39 @@ impl Imap {
     /// (this folder, Inbox, Sent, Archive), the way Outlook includes your own replies.
     /// `seed_ids` are message ids known to belong to the conversation (own ids, In-Reply-To,
     /// References). Two search rounds: the second catches replies to replies.
+    fn is_gmail(&self) -> bool {
+        self.cfg.provider == "gmail" || self.cfg.imap.host.eq_ignore_ascii_case("imap.gmail.com")
+    }
+
+    /// Gmail: "X-GM-THRID <id>" for the conversation of the first seed message found
+    /// (looked up by Message-ID with Gmail's own indexed search). None: fall back to headers.
+    async fn gmail_thread_query(&self, folders: &[String], ids: &[String]) -> Option<String> {
+        let seeds: Vec<String> = ids.iter().take(3).cloned().collect();
+        let folders: Vec<String> = folders.to_vec();
+        let r = self
+            .run_timed(&self.meta, "conversation id", "", move |c| {
+                let (seeds, folders) = (seeds.clone(), folders.clone());
+                Box::pin(async move {
+                    for f in &folders {
+                        c.select(f).await?;
+                        for id in &seeds {
+                            let q = format!("X-GM-RAW {}", quote(&format!("rfc822msgid:{id}")));
+                            let Some(uid) = c.session.uid_search(&q).await?.into_iter().max() else { continue };
+                            if let Some(t) = fetch_gmail_thrid(c, uid).await? {
+                                return Ok(Some(t));
+                            }
+                        }
+                    }
+                    Ok(None)
+                })
+            })
+            .await;
+        match r {
+            Ok(Some(t)) => Some(format!("X-GM-THRID {t}")),
+            _ => None,
+        }
+    }
+
     pub async fn get_thread(&self, folder: &str, seed_ids: &[String]) -> Result<Vec<MessageSummary>> {
         if self.roles.lock().unwrap().is_empty() {
             let _ = self.list_folders().await;
@@ -1317,15 +1376,30 @@ impl Imap {
                 ids.push(id);
             }
         }
+        use std::sync::atomic::Ordering;
+        let gen = self.thread_gen.fetch_add(1, Ordering::AcqRel) + 1;
+        let superseded = || self.thread_gen.load(Ordering::Acquire) != gen;
+        // Gmail knows each conversation's id: one indexed search per folder instead of
+        // matching headers across the whole mailbox (minutes on very large accounts).
+        let gmail_query = if self.is_gmail() { self.gmail_thread_query(&folders, &ids).await } else { None };
         // (folder, uid) -> summary
         let mut members: HashMap<(String, u32), MessageSummary> = HashMap::new();
         for _round in 0..2 {
-            let Some(query) = thread_search_query(&ids) else { break };
+            let query = match &gmail_query {
+                Some(q) => q.clone(),
+                None => match thread_search_query(&ids) {
+                    Some(q) => q,
+                    None => break,
+                },
+            };
             let before = ids.len();
             for fld in &folders {
+                if superseded() {
+                    bail!("A newer conversation was opened.");
+                }
                 let (f2, q2) = (fld.clone(), query.clone());
                 let uids: Vec<u32> = match self
-                    .run(move |c| {
+                    .run_timed(&self.meta, "conversation search", fld, move |c| {
                         let (folder, q) = (f2.clone(), q2.clone());
                         Box::pin(async move {
                             c.select(&folder).await?;
@@ -1361,7 +1435,8 @@ impl Imap {
                     members.insert((fld.clone(), uid), m);
                 }
             }
-            if ids.len() == before {
+            // Gmail's thread id finds the whole conversation in one round.
+            if gmail_query.is_some() || ids.len() == before {
                 break;
             }
         }
@@ -1554,6 +1629,34 @@ pub fn pick_sent_name(newest_first: &[MessageSummary], email: &str) -> Option<St
 
 /// IMAP SEARCH criteria matching any message whose Message-ID, References or In-Reply-To
 /// contains one of `ids` (up to 8 ids; IMAP's OR is binary, so it's nested).
+/// Gmail's conversation id of a message. async-imap doesn't expose X-GM-THRID on its
+/// Fetch type, so send the command ourselves and read the parsed responses.
+async fn fetch_gmail_thrid(c: &mut Conn, uid: u32) -> Result<Option<u64>> {
+    use async_imap::imap_proto::{AttributeValue, Response, Status};
+    let tag = c.session.run_command(format!("UID FETCH {uid} (UID X-GM-THRID)")).await?;
+    let mut thrid = None;
+    while let Some(r) = c.session.read_response().await {
+        let r = r?;
+        match r.parsed() {
+            Response::Fetch(_, attrs) => {
+                for a in attrs.iter() {
+                    if let AttributeValue::GmailThrId(t) = a {
+                        thrid = Some(*t);
+                    }
+                }
+            }
+            Response::Done { tag: t, status, .. } if *t == tag => {
+                if !matches!(status, Status::Ok) {
+                    bail!("X-GM-THRID fetch failed");
+                }
+                return Ok(thrid);
+            }
+            _ => {}
+        }
+    }
+    bail!("Connection closed while reading X-GM-THRID")
+}
+
 pub fn thread_search_query(ids: &[String]) -> Option<String> {
     let mut terms = vec![];
     for id in ids.iter().filter(|s| !s.is_empty()).take(8) {

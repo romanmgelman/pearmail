@@ -86,6 +86,8 @@ pub struct AppState {
     photos: Arc<Mutex<HashMap<String, crate::contacts::PhotoMap>>>,
     /// Closing the window hides it to the notification area instead of quitting.
     pub run_in_background: std::sync::atomic::AtomicBool,
+    /// Launched at Windows sign-in with "open in the background" (no window until asked).
+    started_hidden: bool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -97,6 +99,10 @@ fn err(e: anyhow::Error) -> String {
 }
 
 impl AppState {
+    pub fn new(started_hidden: bool) -> Self {
+        Self { started_hidden, ..Self::default() }
+    }
+
     fn acct(&self, id: &Option<String>) -> CmdResult<Arc<AccountRuntime>> {
         let list = self.accounts.lock().unwrap();
         match id.as_deref().filter(|s| !s.is_empty()) {
@@ -954,6 +960,25 @@ pub fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.set_focus();
     }
+}
+
+/// Whether this launch should stay in the notification area (Windows sign-in, background mode).
+#[tauri::command]
+pub fn started_hidden(state: State<'_, AppState>) -> bool {
+    state.started_hidden
+}
+
+/// "Open Pear Mail when I sign in to Windows" and whether it opens in the background.
+#[tauri::command]
+pub fn get_open_at_login() -> crate::startup::OpenAtLogin {
+    crate::startup::get()
+}
+
+#[tauri::command]
+pub fn set_open_at_login(on: bool, background: bool) -> CmdResult<()> {
+    crate::startup::set(on, background)?;
+    crate::applog::log("startup", if !on { "open at sign-in: off" } else if background { "open at sign-in: background" } else { "open at sign-in: window" });
+    Ok(())
 }
 
 /// "Keep running in the background": with it on, closing the window leaves Pear Mail in

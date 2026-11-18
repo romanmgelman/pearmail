@@ -14,11 +14,16 @@ mod model;
 mod oauth;
 mod providers;
 mod smtp;
+mod startup;
 
 fn main() {
     // Let Windows show notifications as "Pear Mail" with our icon (not PowerShell).
     notify::register();
-    applog::log("app", format!("Pear Mail {} started ({})", env!("CARGO_PKG_VERSION"), windows_build()));
+    // Started at Windows sign-in with "open in the background": keep the window hidden.
+    let started_hidden = std::env::args().any(|a| a == startup::BACKGROUND_FLAG);
+    applog::log("app", format!("Pear Mail {} started ({}){}", env!("CARGO_PKG_VERSION"), windows_build(), if started_hidden { " in the background" } else { "" }));
+    // Point the sign-in entry (if any) at this copy of the exe.
+    startup::refresh();
     // Developer diagnostics (debug builds only, so release builds have no command-line
     // modes that read account data): `--diagnose <file>` runs the inbox sync with the saved
     // account and writes errors/counts (no message content, no password) to <file>.
@@ -169,7 +174,7 @@ It should show the Pear Mail name and icon.", || {});
                 .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
             std::thread::spawn(commands::clean_staging);
             // Safety net: show the window even if the page never signals it's ready.
             use tauri::Manager;
@@ -178,7 +183,7 @@ It should show the Pear Mail name and icon.", || {});
                 crash_guard::install(&w);
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(2));
-                    if !w.is_visible().unwrap_or(true) {
+                    if !started_hidden && !w.is_visible().unwrap_or(true) {
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
@@ -188,7 +193,7 @@ It should show the Pear Mail name and icon.", || {});
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(commands::AppState::default())
+        .manage(commands::AppState::new(started_hidden))
         .invoke_handler(tauri::generate_handler![
             commands::restore_session,
             commands::sign_out,
@@ -232,6 +237,9 @@ It should show the Pear Mail name and icon.", || {});
             commands::stage_attachment,
             commands::stage_message_attachments,
             commands::set_run_in_background,
+            commands::started_hidden,
+            commands::get_open_at_login,
+            commands::set_open_at_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pear Mail");

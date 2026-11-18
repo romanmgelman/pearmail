@@ -274,14 +274,16 @@ function splashDone() {
 
 async function boot() {
   setTimeout(splashDone, 3500); // never keep the splash up for long, even offline
-  api.setRunInBackground(settings.runInBackground).catch(() => {});
+  // Started at Windows sign-in "in the background": no window, just the tray icon.
+  const hidden = await api.startedHidden().catch(() => false);
+  api.setRunInBackground(settings.runInBackground || hidden).catch(() => {});
   fillStaticIcons();
   applySettings();
   syncNativeTheme();
   // The window starts hidden while its saved size/position is restored; show it now that the
   // page is running. (Hidden windows may not paint, so don't wait for a frame; the window's
   // background is already the splash's dark color, so nothing flashes.)
-  (async () => { try { const w = appWindow(); await w.show(); await w.setFocus(); } catch {} })();
+  if (!hidden) (async () => { try { const w = appWindow(); await w.show(); await w.setFocus(); } catch {} })();
   try {
     const accounts = await api.restore();
     if (accounts?.length) return start(accounts);
@@ -3185,6 +3187,9 @@ async function openSettings() {
     <div class="set-sec">Composing</div>
     <div class="set-row"><span>Undo Send delay</span>${radio("undoSendDelay", [[0, "Off"], [5, "5 s"], [10, "10 s"], [20, "20 s"], [30, "30 s"]], settings.undoSendDelay)}</div>
     <div class="set-col"><span>Signature</span><textarea name="signature" placeholder="e.g. Sent from Pear Mail">${esc(settings.signature)}</textarea></div>
+    <div class="set-sec">Startup</div>
+    ${toggle("openAtLogin", "Open Pear Mail when I sign in to Windows", false)}
+    <div class="set-row startup-mode" hidden><span><span class="tl">Open in</span><span class="th">In the background, Pear Mail starts in the notification area and notifies you about new mail. This needs "Keep running in the background".</span></span>${radio("startupMode", [["window", "Window"], ["background", "Background"]], "window")}</div>
     <div class="set-sec">Notifications</div>
     ${toggle("notifications", "Notify me about new mail", settings.notifications, "Shown when Pear Mail isn't in the foreground.")}
     ${toggle("runInBackground", "Keep running in the background", settings.runInBackground, "When the window is closed, Pear Mail stays in the notification area and keeps notifying you. Right-click its icon to exit.")}
@@ -3194,6 +3199,22 @@ async function openSettings() {
   </div>`;
   document.body.appendChild(back);
   applySettings(); // sync the Automatic / Dark Mode switches
+  // Open at sign-in lives in the Windows registry (the source of truth), not in settings.
+  const startupEl = back.querySelector('[name="openAtLogin"]');
+  const modeRow = back.querySelector(".startup-mode");
+  const showStartup = (st) => {
+    startupEl.checked = st.on;
+    modeRow.hidden = !st.on;
+    const mode = st.background ? "background" : "window";
+    modeRow.querySelectorAll("input").forEach((i) => { i.checked = i.value === mode; i.closest("label").classList.toggle("on", i.checked); });
+  };
+  let startup = { on: false, background: false };
+  let startupBefore = null;
+  api.getOpenAtLogin().then((st) => { startup = st; startupBefore ??= { ...st }; showStartup(st); }).catch(() => {});
+  const setStartup = async (st) => {
+    try { await api.setOpenAtLogin(st.on, st.background); startup = st; } catch (e) { handleError(e); }
+    showStartup(startup);
+  };
   dragReorder(back.querySelector(".acct-list"), { item: ".acct-row", handle: ".acct-grip", idOf: (el) => el.dataset.acct, onDrop: (ids) => ids && reorderAccounts(ids, "settings") });
   // Text fields are saved by Save and Done (switches apply right away).
   const save = async () => {
@@ -3227,6 +3248,7 @@ async function openSettings() {
     const changed = Object.keys(before).filter((k) => JSON.stringify(settings[k]) !== JSON.stringify(before[k]));
     for (const k of changed) if (k !== "theme") saveSetting(k, before[k]);
     if (changed.includes("theme")) setTheme(before.theme);
+    if (startupBefore && (startupBefore.on !== startup.on || startupBefore.background !== startup.background)) setStartup(startupBefore);
     dismissModal(back);
     applySettings();
     if (changed.some((k) => ["groupByDate", "listAvatars", "previewLines"].includes(k))) renderList({ animate: false });
@@ -3241,11 +3263,24 @@ async function openSettings() {
     if (e.target.closest('[data-act="add-account"]')) { close().then(addAccount); }
     if (e.target.closest('[data-act="show-log"]')) api.showLogFile().catch(handleError);
   });
+  const setRunInBackgroundSwitch = (on) => {
+    const el = back.querySelector('[name="runInBackground"]');
+    el.checked = on;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   back.addEventListener("change", (e) => {
     const t = e.target;
     // Let the switch finish sliding, then crossfade the app.
     if (t.name === "themeAuto") { setTheme(t.checked ? "system" : document.documentElement.classList.contains("is-dark") ? "dark" : "light", 240); return; }
     if (t.name === "themeDark") { setTheme(t.checked ? "dark" : "light", 240); return; }
+    if (t.name === "openAtLogin") { setStartup({ on: t.checked, background: t.checked && startup.background && settings.runInBackground }); return; }
+    if (t.name === "startupMode") {
+      const background = t.value === "background";
+      // Background needs the tray icon, or Pear Mail would run with no way to open it.
+      if (background && !settings.runInBackground) setRunInBackgroundSwitch(true);
+      setStartup({ on: true, background });
+      return;
+    }
     if (!t.name || ["signature", "msId", "gId", "gSecret"].includes(t.name) || t.classList.contains("acct-name")) return;
     let val = t.type === "checkbox" ? t.checked : t.value;
     if (["previewLines", "zoom", "undoSendDelay"].includes(t.name)) val = Number(val);
@@ -3260,10 +3295,15 @@ async function openSettings() {
     if (t.name === "runInBackground") {
       api.setRunInBackground(val).catch(handleError);
       if (val) saveSetting("trayNoticeShown", false);
+      // Without the tray icon a background start would be invisible: open in the window instead.
+      if (!val && startup.on && startup.background) {
+        setStartup({ on: true, background: false });
+        toast("Pear Mail will now open in a window when you sign in.");
+      }
     }
   });
   back.querySelector('[data-act="done"]').onclick = close;
-  back.querySelector('[data-act="save"]').onclick = () => save().then(() => { before = JSON.parse(JSON.stringify(settings)); toast("Settings saved."); });
+  back.querySelector('[data-act="save"]').onclick = () => save().then(() => { before = JSON.parse(JSON.stringify(settings)); startupBefore = { ...startup }; toast("Settings saved."); });
   back.querySelector('[data-act="cancel"]').onclick = cancel;
   back.addEventListener("mousedown", (e) => e.target === back && close());
   back.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") cancel(); });

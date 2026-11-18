@@ -78,6 +78,7 @@ The frontend (`ui/`) is plain HTML, CSS and ES modules embedded into the binary 
 - **Message list.** Messages are grouped by date (Today, Yesterday, This Week…), attachment names show in the list, and hovering a row shows read/flag/delete buttons. Sender pictures are optional.
 - **Undo** for delete, move and archive, several in a row: each Ctrl+Z (or Undo) takes back the latest one. Changes go to the server 6 seconds after your last action.
 - **New-mail notifications**, unread count in the window title, and the window size and position are remembered. Only one copy of the app can run at a time.
+- **Open at sign-in.** Pear Mail can start when you sign in to Windows, either in its window or quietly in the notification area so it's ready to notify you about new mail (Settings → Startup).
 - **Settings** (Ctrl+,) for theme, message dark mode, preview lines, text size, signature, notifications and more.
 - IMAP over TLS (`imap.mail.me.com:993`) and SMTP with STARTTLS (`smtp.mail.me.com:587`)
 - Mailboxes: Inbox, VIP, Flagged, Drafts, Sent, Junk, Trash and Archive, plus your own folders (create, rename, delete), with unread counts

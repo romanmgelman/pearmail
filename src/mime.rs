@@ -230,7 +230,8 @@ fn decode_entities(s: &str) -> String {
         rest = &rest[i..];
         // An entity is short: look for its ';' within the next few characters (not bytes,
         // so a multi-byte character right after the '&' can't be cut in half).
-        let semi = rest.char_indices().take(12).find(|&(_, c)| c == ';').map(|(i, _)| i);
+        // (HTML5 names run up to 31 characters: "&CounterClockwiseContourIntegral;".)
+        let semi = rest.char_indices().take(34).find(|&(_, c)| c == ';').map(|(i, _)| i);
         let decoded = semi.and_then(|e| {
             let name = &rest[1..e];
             let ch = if let Some(num) = name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
@@ -260,6 +261,17 @@ fn decode_entities(s: &str) -> String {
                     "euro" => Some('\u{20ac}'),
                     "pound" => Some('\u{a3}'),
                     "zwnj" | "zwj" | "shy" => Some('\u{200c}'),
+                    // Everything else from the full HTML5 table: accented letters (&eacute;
+                    // &ocirc; &uuml; &ntilde;…), symbols, Greek… Names are ASCII letters/digits.
+                    _ if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                        let ent = format!("&{name};");
+                        let d = html_escape::decode_html_entities(&ent);
+                        let mut cs = d.chars();
+                        match (cs.next(), cs.next()) {
+                            (Some(c), None) if d != ent => Some(c),
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 }
             };
@@ -989,6 +1001,15 @@ Content-Type: text/html; charset=utf-8
         let raw = mail("--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<style>.a{x:1}</style><div style=\"display:none\">Big sale &amp; more&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div><p>Hi &ldquo;Sam&rdquo; &#8212; it&#39;s here</p><blockquote>old reply</blockquote>\r\n");
         let m = parse(raw.as_bytes()).unwrap();
         assert_eq!(preview_of(&m), "Big sale & more Hi \u{201c}Sam\u{201d} \u{2014} it's here");
+    }
+
+    #[test]
+    fn preview_decodes_accented_letters() {
+        let raw = mail("--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>D&eacute;couvre &agrave; c&ocirc;t&eacute;s &Uuml;ber &ntilde; &aring; &Eacute;t&eacute;</p>\r\n");
+        let m = parse(raw.as_bytes()).unwrap();
+        assert_eq!(preview_of(&m), "Découvre à côtés Über ñ å Été");
+        // Unknown names and bare ampersands stay as written.
+        assert_eq!(decode_entities("a &bogus; b & c"), "a &bogus; b & c");
     }
 
     #[test]

@@ -43,7 +43,8 @@ pub struct Person {
 /// Version of the list-preview builder (`mime::preview_of`). Raise it when previews should
 /// change: cached summaries made by an older version are fetched again.
 /// 11: signatures skipped; forwards preview as "Fwd from <name>: …".
-pub const PREVIEW_V: u8 = 11;
+/// 12: every HTML named entity decoded (accented letters showed as "&eacute;").
+pub const PREVIEW_V: u8 = 12;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

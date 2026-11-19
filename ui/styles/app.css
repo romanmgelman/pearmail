@@ -160,17 +160,19 @@ input, textarea { font: inherit; color: inherit; }
 .msg-row .dot { position: absolute; left: 14px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--unread); }
 .msg-row .marks { position: absolute; left: 12px; top: 31px; display: flex; flex-direction: column; gap: 3px; align-items: center; width: 14px; }
 .msg-row .marks .icon { width: 13px; height: 13px; }
-.msg-row .marks .flag { color: var(--flag); }
 .msg-row .marks .replied { color: var(--accent); }
-.msg-row .marks .conv-badge { min-width: 14px; height: 14px; padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 7px; }
+.msg-row .line1 .conv-badge { min-width: 14px; height: 14px; padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 7px; }
 .msg-row .line1 { display: flex; align-items: baseline; gap: 8px; }
 .msg-row .from { flex: 1; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-row.unread .from { font-weight: 700; }
 .msg-row .date { font-size: 13px; color: var(--text-2); flex: none; display: flex; align-items: center; gap: 4px; }
 .msg-row .date .icon { width: 13px; height: 13px; }
 .msg-row .subject { font-size: 13px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; gap: 6px; align-items: center; }
-.msg-row .subject span { overflow: hidden; text-overflow: ellipsis; }
+.msg-row .subject span { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .msg-row .subject .icon { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+/* The flag sits at the right end of the subject line, under the date (and conversation pill). */
+.msg-row .subject .flag { margin-left: auto; margin-right: 1px; color: var(--flag); }
+.list-scroll:focus-within .msg-row.selected .subject .flag, .list-scroll.focused .msg-row.selected .subject .flag { color: #fff; }
 .msg-row .preview {
   font-size: 13px; color: var(--text-2); margin-top: 1px; line-height: 17px;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--preview-lines, 2); overflow: hidden;
@@ -751,18 +753,14 @@ body.dragging-reorder, body.dragging-reorder * { cursor: grabbing !important; us
 }
 .list-scroll:focus-within .msg-row.selected .conv-badge { background: rgba(255,255,255,0.25); color: #fff; }
 .list-scroll:focus-within .msg-row.selected .thread-toggle { color: rgba(255,255,255,0.85); }
-/* The conversation's expander and count sit together under the reply arrow, in blue. */
-.msg-row .marks .thread-ctl { align-self: flex-start; display: flex; align-items: center; gap: 1px; cursor: pointer; }
-.msg-row .marks .thread-ctl:hover .thread-toggle { background: var(--row-hover); }
-/* Chevron highlight as tall as the badge, so it doesn't stick out above or below. */
-.msg-row .marks .thread-ctl .thread-toggle { width: 14px; height: 14px; }
-/* With contact photos and no reply arrow or flag above it, the pair drops below the photo. */
-.app.list-avatars .msg-row .marks .thread-ctl:first-child { margin-top: 8px; }
-.msg-row .marks .thread-toggle { margin: 0; width: 12px; color: var(--accent); }
-.msg-row .marks .thread-toggle:hover { color: var(--accent); }
-.msg-row .marks .conv-badge { background: var(--accent-soft); color: var(--accent); }
-.list-scroll:focus-within .msg-row.selected .marks .conv-badge { background: rgba(255,255,255,0.25); color: #fff; }
-.list-scroll:focus-within .msg-row.selected .marks .thread-toggle { color: #fff; }
+/* The conversation's count and expander sit together to the right of the date. */
+.msg-row .line1 .thread-ctl { flex: none; align-self: center; margin-left: -2px; display: flex; align-items: center; gap: 1px; cursor: pointer; }
+.msg-row .line1 .thread-ctl:hover .thread-toggle { background: var(--row-hover); }
+.msg-row .line1 .thread-toggle { margin: 0; width: 12px; color: var(--accent); }
+.msg-row .line1 .thread-toggle:hover { color: var(--accent); }
+.msg-row .line1 .conv-badge { background: var(--accent-soft); color: var(--accent); }
+.list-scroll:focus-within .msg-row.selected .line1 .conv-badge { background: rgba(255,255,255,0.25); color: #fff; }
+.list-scroll:focus-within .msg-row.selected .line1 .thread-toggle { color: #fff; }
 .msg-row.child { padding-left: 62px; contain-intrinsic-size: auto 64px; }
 .msg-row.child::after { left: 62px; }
 .app.list-avatars .msg-row.child { padding-left: 88px; }
@@ -936,9 +934,9 @@ body.dragging-reorder, body.dragging-reorder * { cursor: grabbing !important; us
 :root[data-theme="dark"] { --drop-tint: rgba(0, 0, 0, 0.32); }
 
 /* The conversation count and its chevron share one pill (no separate highlight). */
-.msg-row .marks .thread-ctl { height: 14px; padding: 0 3px 0 5px; gap: 1px; border-radius: 7px; background: var(--badge-soft); color: var(--badge-ink); }
-.msg-row .marks .thread-ctl:hover { background: color-mix(in srgb, var(--badge-ink) 24%, transparent); }
-.msg-row .marks .thread-ctl .conv-badge { background: transparent !important; color: inherit !important; min-width: 0; padding: 0; }
-.msg-row .marks .thread-ctl .thread-toggle { background: transparent !important; color: inherit !important; width: 9px; height: 14px; margin: 0; padding: 0; border-radius: 0; }
-.msg-row .marks .thread-ctl .thread-toggle .icon { width: 9px; height: 9px; }
-.list-scroll:focus-within .msg-row.selected .marks .thread-ctl, .list-scroll.focused .msg-row.selected .marks .thread-ctl { background: rgba(255, 255, 255, 0.25); color: #fff; }
+.msg-row .line1 .thread-ctl { height: 14px; padding: 0 3px 0 5px; gap: 1px; border-radius: 7px; background: var(--badge-soft); color: var(--badge-ink); }
+.msg-row .line1 .thread-ctl:hover { background: color-mix(in srgb, var(--badge-ink) 24%, transparent); }
+.msg-row .line1 .thread-ctl .conv-badge { background: transparent !important; color: inherit !important; min-width: 0; padding: 0; }
+.msg-row .line1 .thread-ctl .thread-toggle { background: transparent !important; color: inherit !important; width: 9px; height: 14px; margin: 0; padding: 0; border-radius: 0; }
+.msg-row .line1 .thread-ctl .thread-toggle .icon { width: 9px; height: 9px; }
+.list-scroll:focus-within .msg-row.selected .line1 .thread-ctl, .list-scroll.focused .msg-row.selected .line1 .thread-ctl { background: rgba(255, 255, 255, 0.25); color: #fff; }

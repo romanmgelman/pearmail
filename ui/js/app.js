@@ -1040,9 +1040,9 @@ function rowHtml(m, { child = false } = {}) {
   return `<div class="msg-row${child ? " child" : ""}${sel ? " selected" : ""}${m.seen ? "" : " unread"}" data-id="${esc(m.id)}" draggable="true">
     ${m.seen ? "" : '<span class="dot"></span>'}
     ${avatarHtml(showTo ? m.to[0] || m.from : m.from, "row-avatar")}
-    <div class="marks">${m.flagged ? icon("flagFill", "flag") : ""}${m.answered ? icon("replied", "replied") : ""}</div>
+    <div class="marks">${m.answered ? icon("replied", "replied") : ""}</div>
     <div class="line1"><span class="from${vip ? " has-vip" : ""}">${esc(who)}</span>${vip ? vipBadge() : ""}<span class="date">${acctMark}${m.hasAttachments ? icon("paperclip") : ""}${esc(listDate(m.date))}</span></div>
-    <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span></div>
+    <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span>${m.flagged ? icon("flagFill", "flag") : ""}</div>
     <div class="preview">${esc(m.preview || "This message has no content.")}</div>
     ${chips}
     <div class="row-actions">
@@ -1137,9 +1137,9 @@ function threadRowHtml(t) {
   return `<div class="msg-row thread${sel ? " selected" : ""}${t.unread ? " unread" : ""}${open ? " expanded" : ""}" data-id="${esc(key)}" draggable="true">
     ${t.unread ? '<span class="dot"></span>' : ""}
     ${avatarHtml(face, "row-avatar")}
-    <div class="marks">${t.flagged ? icon("flagFill", "flag") : ""}${t.answered ? icon("replied", "replied") : ""}<span class="thread-ctl" data-thread="${esc(t.key)}" title="${t.count} messages: show or hide them"><span class="conv-badge">${t.count}</span><button class="thread-toggle" tabindex="-1">${icon("chevronRight")}</button></span></div>
-    <div class="line1"><span class="from${anyVip ? " has-vip" : ""}">${who}</span>${anyVip ? vipBadge() : ""}<span class="date">${acctMark}${t.hasAttachments ? icon("paperclip") : ""}${esc(listDate(t.date))}</span></div>
-    <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span></div>
+    <div class="marks">${t.answered ? icon("replied", "replied") : ""}</div>
+    <div class="line1"><span class="from${anyVip ? " has-vip" : ""}">${who}</span>${anyVip ? vipBadge() : ""}<span class="date">${acctMark}${t.hasAttachments ? icon("paperclip") : ""}${esc(listDate(t.date))}</span><span class="thread-ctl" data-thread="${esc(t.key)}" title="${t.count} messages: show or hide them"><span class="conv-badge">${t.count}</span><button class="thread-toggle" tabindex="-1">${icon("chevronRight")}</button></span></div>
+    <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span>${t.flagged ? icon("flagFill", "flag") : ""}</div>
     <div class="preview">${esc(m.preview || "This message has no content.")}</div>
     ${chips}
     <div class="row-actions">

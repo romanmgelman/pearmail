@@ -238,8 +238,8 @@ input, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px; margin: 14px 0 0; padding: 9px 14px; border-radius: 10px;
   background: var(--field-bg); font-size: 13px; color: var(--text-2);
 }
-.remote-bar .icon { width: 18px; height: 18px; color: var(--text-3); }
-.remote-bar span { flex: 1; }
+.remote-bar .icon { flex: none; width: 18px; height: 18px; color: var(--text-3); }
+.remote-bar > span:not(.icon) { flex: 1; } /* the message text, not the icon (also a span) */
 .remote-bar button { border: 0; background: transparent; color: var(--accent); font-weight: 500; cursor: pointer; padding: 2px 4px; }
 .msg-body { padding-top: 16px; }
 .msg-body iframe { width: 100%; border: 0; display: block; min-height: 60px; background: transparent; color-scheme: light; }
@@ -898,13 +898,26 @@ body.dragging-reorder, body.dragging-reorder * { cursor: grabbing !important; us
 .vip-badge .icon { width: 10px; height: 10px; }
 .list-scroll:focus-within .msg-row.selected .vip-badge, .list-scroll.focused .msg-row.selected .vip-badge { background: rgba(255, 255, 255, 0.22); color: #ffe27a; }
 .msg-row .from.has-vip { flex: 0 1 auto; }
-.msg-row .line1 .vip-badge { margin: 0 auto 0 -3px; }
+/* Badges after the name in a row (VIP, BLOCKED, DRAFT) sit close to it; the date keeps to the right. */
+.msg-row .line1 :is(.vip-badge, .blocked-badge, .draft-badge) { margin-left: -3px; }
+.msg-row .line1 .draft-badge { height: 15px; padding: 0 5px 0 4px; }
+.msg-row .line1 .date { margin-left: auto; }
 .cc-line1 .vip-badge { margin-left: -3px; }
 .msg-head .sender .vip-badge { margin-left: 6px; }
 
+/* ---- Blocked senders: a red "Blocked" pill after the name, and a bar in the message ---- */
+.blocked-badge { display: inline-flex; align-items: center; gap: 3px; flex: none; height: 15px; padding: 0 5px 0 4px; border-radius: 5px; background: var(--blocked-soft); color: var(--blocked-ink); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1; vertical-align: 2px; white-space: nowrap; align-self: center; }
+.blocked-badge .icon { width: 10px; height: 10px; }
+.list-scroll:focus-within .msg-row.selected .blocked-badge, .list-scroll.focused .msg-row.selected .blocked-badge { background: rgba(255, 255, 255, 0.22); color: #ffd3d0; }
+.msg-row .from.has-badge { flex: 0 1 auto; }
+.cc-line1 .blocked-badge { margin-left: -3px; }
+.msg-head .sender .blocked-badge { margin-left: 6px; }
+.msg-card .blocked-bar + .remote-bar { margin-top: -4px; }
+
 /* ---- Drafts: an orange DRAFT pill, so a draft never passes for sent mail ---- */
-.draft-badge { display: inline-flex; align-items: center; flex: none; height: 16px; padding: 0 6px; border-radius: 5px; background: var(--draft-soft); color: var(--draft-ink); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1; vertical-align: 2px; white-space: nowrap; align-self: center; }
-.msg-subject .draft-badge { height: 20px; padding: 0 8px; margin-right: 10px; font-size: 12px; font-family: var(--font); vertical-align: 3px; }
+.draft-badge { display: inline-flex; align-items: center; gap: 3px; flex: none; height: 16px; padding: 0 6px 0 4px; border-radius: 5px; background: var(--draft-soft); color: var(--draft-ink); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1; vertical-align: 2px; white-space: nowrap; align-self: center; }
+.draft-badge .icon { width: 10px; height: 10px; }
+.list-scroll:focus-within .msg-row.selected .draft-badge, .list-scroll.focused .msg-row.selected .draft-badge { background: rgba(255, 255, 255, 0.22); color: #ffd9b0; }
 .msg-head .sender .draft-badge { margin-left: 8px; }
 .cc-line1 .draft-badge { margin-left: 6px; }
 

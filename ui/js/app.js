@@ -101,7 +101,9 @@ const isBlockedPerson = (p) => !!p?.email && blocked().includes(p.email.toLowerC
 const sweeping = new Set(); // ids being moved to Trash right now (a refresh can see them again meanwhile)
 /** The little badge shown right after a VIP's name. */
 const vipBadge = () => `<span class="vip-badge" title="VIP">${icon("vip")}VIP</span>`;
-const draftBadge = () => `<span class="draft-badge" title="Draft: not sent yet">Draft</span>`;
+/** After a blocked sender's name (their mail ends up in Trash: this says why). */
+const blockedBadge = () => `<span class="blocked-badge" title="You blocked this sender">${icon("block")}Blocked</span>`;
+const draftBadge = () => `<span class="draft-badge" title="Draft: not sent yet">${icon("drafts")}Draft</span>`;
 const remoteOkMessages = () => store.get("remoteOkMessages", []);
 
 /* ------------------------------------------------------------------ */
@@ -1037,6 +1039,8 @@ function rowHtml(m, { child = false } = {}) {
   const showTo = role === "sent" || role === "drafts";
   const who = showTo ? (m.to.length ? m.to.map(displayName).join(", ") : "No Recipients") : displayName(m.from);
   const vip = showTo ? m.to.length === 1 && isVipPerson(m.to[0]) : isVipPerson(m.from);
+  const blockedFrom = !showTo && isBlockedPerson(m.from);
+  const draft = !m.local && messageRole(m) === "drafts";
   const names = m.attachmentNames || [];
   const chips = names.length
     ? `<div class="att-chips"><span class="att-chip">${icon("paperclip")}<span>${esc(names[0])}</span></span>${names.length > 1 ? `<span class="att-more">+${names.length - 1}</span>` : ""}</div>`
@@ -1047,7 +1051,7 @@ function rowHtml(m, { child = false } = {}) {
     ${m.seen ? "" : '<span class="dot"></span>'}
     ${avatarHtml(showTo ? m.to[0] || m.from : m.from, "row-avatar")}
     <div class="marks">${m.answered ? icon("replied", "replied") : ""}</div>
-    <div class="line1"><span class="from${vip ? " has-vip" : ""}">${esc(who)}</span>${vip ? vipBadge() : ""}<span class="date">${acctMark}${m.hasAttachments ? icon("paperclip") : ""}${esc(listDate(m.date))}</span></div>
+    <div class="line1"><span class="from${vip ? " has-vip" : ""}${vip || blockedFrom || draft ? " has-badge" : ""}">${esc(who)}</span>${vip ? vipBadge() : ""}${blockedFrom ? blockedBadge() : ""}${draft ? draftBadge() : ""}<span class="date">${acctMark}${m.hasAttachments ? icon("paperclip") : ""}${esc(listDate(m.date))}</span></div>
     <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span>${m.flagged ? `<span class="row-tail">${icon("flagFill", "flag")}</span>` : ""}</div>
     <div class="preview">${esc(m.preview || "This message has no content.")}</div>
     ${chips}
@@ -1139,12 +1143,16 @@ function threadRowHtml(t) {
   const acctMark = multi() && isUnified() ? `<span class="row-acct" style="background:${acctColor(m.account)}" title="${esc(acctLabel(acctById(m.account)))}"></span>` : "";
   // One VIP badge after the names if anyone in the conversation is a VIP.
   const anyVip = (t.participantEmails || []).some((e) => isVipPerson({ email: e }));
+  // Blocked: the person the conversation is with (its face) is blocked.
+  const blockedFrom = !mine.has((face?.email || "").toLowerCase()) && isBlockedPerson(face);
+  // The conversation's newest message is a draft you haven't sent yet.
+  const draft = !m.local && messageRole(m) === "drafts";
   const who = esc(t.participants.join("; ") || displayName(m.from));
   return `<div class="msg-row thread${sel ? " selected" : ""}${t.unread ? " unread" : ""}${open ? " expanded" : ""}" data-id="${esc(key)}" draggable="true">
     ${t.unread ? '<span class="dot"></span>' : ""}
     ${avatarHtml(face, "row-avatar")}
     <div class="marks">${t.answered ? icon("replied", "replied") : ""}</div>
-    <div class="line1"><span class="from${anyVip ? " has-vip" : ""}">${who}</span>${anyVip ? vipBadge() : ""}<span class="date">${acctMark}${t.hasAttachments ? icon("paperclip") : ""}${esc(listDate(t.date))}</span></div>
+    <div class="line1"><span class="from${anyVip ? " has-vip" : ""}${anyVip || blockedFrom || draft ? " has-badge" : ""}">${who}</span>${anyVip ? vipBadge() : ""}${blockedFrom ? blockedBadge() : ""}${draft ? draftBadge() : ""}<span class="date">${acctMark}${t.hasAttachments ? icon("paperclip") : ""}${esc(listDate(t.date))}</span></div>
     <div class="subject"><span>${esc(m.subject || "(No Subject)")}</span><span class="row-tail">${t.flagged ? icon("flagFill", "flag") : ""}<span class="thread-ctl" data-thread="${esc(t.key)}" title="${t.count} messages: show or hide them"><span class="conv-badge">${t.count}</span><button class="thread-toggle" tabindex="-1">${icon("chevronRight")}</button></span></span></div>
     <div class="preview">${esc(m.preview || "This message has no content.")}</div>
     ${chips}
@@ -1886,8 +1894,7 @@ function renderConvHeader(conv) {
   const latest = cards[0].d || cards[0].m;
   const flagged = cards.some((c) => (c.d || c.m).flagged);
   const n = cards.length;
-  const draft = !latest.local && messageRole(latest) === "drafts";
-  head.innerHTML = `<h1 class="msg-subject">${draft ? draftBadge() : ""}${esc(latest.subject || "(No Subject)")}${flagged ? `<span class="flagmark">${icon("flagFill")}</span>` : ""}</h1>${n > 1 ? `<div class="conv-count">${n} messages</div>` : ""}`;
+  head.innerHTML = `<h1 class="msg-subject">${esc(latest.subject || "(No Subject)")}${flagged ? `<span class="flagmark">${icon("flagFill")}</span>` : ""}</h1>${n > 1 ? `<div class="conv-count">${n} messages</div>` : ""}`;
 }
 
 /**
@@ -1983,7 +1990,7 @@ function cardElement(conv, id) {
     el.innerHTML = `<div class="cc-head" title="${c.open ? "" : "Show this message"}">
         ${avatarHtml(m.from)}
         <div class="cc-meta">
-          <div class="cc-line1"><span class="cc-from">${esc(isMine(m.from) ? "Me" : displayName(m.from))}</span>${isVipPerson(m.from) ? vipBadge() : ""}${sentTag}<span class="cc-date">${esc(listDate(m.date))}</span>${icon("chevronRight", "cc-chev")}</div>
+          <div class="cc-line1"><span class="cc-from">${esc(isMine(m.from) ? "Me" : displayName(m.from))}</span>${isVipPerson(m.from) ? vipBadge() : ""}${!isMine(m.from) && isBlockedPerson(m.from) ? blockedBadge() : ""}${sentTag}<span class="cc-date">${esc(listDate(m.date))}</span>${icon("chevronRight", "cc-chev")}</div>
           <div class="cc-preview">${esc(m.preview || "This message has no content.")}</div>
         </div>
       </div>${tail}`;
@@ -2000,6 +2007,7 @@ function cardElement(conv, id) {
   const d = c.d;
   el.className = `conv-card msg-card${state.detail?.id === id ? " focused" : ""} ${cardThemeClass(c.d)}`.trim();
   const from = shownSender(d.from);
+  const fromBlocked = !isMine(d.from) && isBlockedPerson(d.from);
   const remoteOk = remoteAllowed(d);
   const adapted = messageAdapted(d);
   const people = (label, ps) =>
@@ -2010,7 +2018,7 @@ function cardElement(conv, id) {
       <div class="msg-head${multiConv ? " collapsible" : ""}"${multiConv ? ' title="Hide this message"' : ""}>
         ${avatarHtml(d.from)}
         <div class="meta">
-          <div class="sender"><span class="p" data-i="from"><span class="pn">${esc(displayName(from))}</span>${icon("chevronRight", "chev")}</span>${from.name ? `<span class="addr">&lt;${esc(from.email)}&gt;</span>` : ""}${isVipPerson(from) ? vipBadge() : ""}${sentTag}</div>
+          <div class="sender"><span class="p" data-i="from"><span class="pn">${esc(displayName(from))}</span>${icon("chevronRight", "chev")}</span>${from.name ? `<span class="addr">&lt;${esc(from.email)}&gt;</span>` : ""}${isVipPerson(from) ? vipBadge() : ""}${fromBlocked ? blockedBadge() : ""}${sentTag}</div>
           ${people("To", d.to)}${people("Cc", d.cc)}${people("Bcc", d.bcc || [])}${d.replyTo.length && d.replyTo[0].email !== d.from.email ? people("Reply-To", d.replyTo) : ""}${acctLine}
         </div>
         <div class="head-right">
@@ -2025,6 +2033,7 @@ function cardElement(conv, id) {
           <div class="when">${esc(longDate(d.date))}${multiConv ? icon("chevronRight", "cc-chev") : ""}</div>
         </div>
       </div>
+      ${fromBlocked ? `<div class="remote-bar blocked-bar">${icon("block")}<span>This message is from a blocked sender.</span><button class="unblock-sender">Unblock</button></div>` : ""}
       ${d.hasRemoteContent && !remoteOk ? `<div class="remote-bar">${icon("photo")}<span>Pictures in this message were blocked to protect your privacy.</span><button class="load-remote">Load Pictures</button><button class="trust-sender">Always Load from Sender</button></div>` : ""}
       ${state.showHeaders && state.detail?.id === id ? `<div class="raw-headers">${esc(d.rawHeaders)}</div>` : ""}
       ${attachmentsHtml(d)}
@@ -2060,6 +2069,7 @@ function cardElement(conv, id) {
     set.has(k) ? set.delete(k) : set.add(k);
     updateReaderTheme(true);
   });
+  el.querySelector(".unblock-sender")?.addEventListener("click", () => unblockSender(d.from.email));
   el.querySelector(".load-remote")?.addEventListener("click", () => {
     store.set("remoteOkMessages", [...remoteOkMessages().slice(-999), msgKey(d)]);
     renderCard(conv, el.dataset.card);
@@ -2709,6 +2719,7 @@ async function blockSenders(people) {
   });
   if (!ok) return;
   store.set("blockedSenders", [...new Set([...blocked(), ...list.map((p) => p.email.toLowerCase())])]);
+  blockedChanged(list.map((p) => p.email)); // badges first, then their inbox rows slide away
   const ids = sweepBlocked(state.messages);
   if (ids.length) removeFromList(ids);
   toast(ids.length ? `Blocked. Moved ${count(ids.length)} to Trash.` : "Blocked.");
@@ -2718,12 +2729,30 @@ function unblockSender(email) {
   const k = email.toLowerCase();
   store.set("blockedSenders", blocked().filter((x) => x !== k));
   toast("Unblocked.");
+  blockedChanged([k]);
+}
+
+/** Senders were blocked or unblocked: update the "Blocked" badges in the list and the open
+ *  conversation's cards from them (other cards stay as they are, so nothing reloads needlessly). */
+function blockedChanged(emails) {
+  const set = new Set(emails.map((e) => e.toLowerCase()));
+  renderList({ animate: false });
+  const conv = state.conv;
+  if (!conv) return;
+  for (const id of conv.order) {
+    const c = conv.cards.get(id);
+    const from = (c?.d?.from || c?.m?.from)?.email?.toLowerCase();
+    if (from && set.has(from)) renderCard(conv, id);
+  }
 }
 
 async function manageBlocked() {
   const r = await dialog({ title: "Blocked Senders", message: "One email address per line. Their inbox mail is moved to Trash.", fields: [{ id: "v", multiline: true, value: blocked().join("\n") }], ok: "Save" });
   if (!r) return;
+  const before = blocked();
   store.set("blockedSenders", [...new Set(r.v.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter((x) => x.includes("@")))]);
+  const after = blocked();
+  blockedChanged([...before.filter((x) => !after.includes(x)), ...after.filter((x) => !before.includes(x))]);
   const ids = sweepBlocked(state.messages);
   if (ids.length) removeFromList(ids);
 }

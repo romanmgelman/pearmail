@@ -477,9 +477,24 @@ export function openCompose(opts) {
     closed = true;
     clearInterval(autosave);
     window.removeEventListener("resize", onResize);
+    document.removeEventListener("selectionchange", syncFmt);
     el.remove();
     if (current?.el === el) current = null;
   }
+
+  // Light up the formatting buttons whose style is in use where the cursor is.
+  const fmtBtns = [...el.querySelectorAll(".fmt-bar [data-cmd]")];
+  function syncFmt() {
+    const sel = document.getSelection();
+    const inEditor = !!sel?.anchorNode && editor.contains(sel.anchorNode);
+    for (const b of fmtBtns) {
+      let on = false;
+      if (inEditor) { try { on = document.queryCommandState(b.dataset.cmd); } catch {} }
+      b.classList.toggle("on", on);
+    }
+  }
+  document.addEventListener("selectionchange", syncFmt);
+  for (const ev of ["keyup", "mouseup", "input", "focus"]) editor.addEventListener(ev, syncFmt);
 
   el.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-a],[data-cmd]");
@@ -488,6 +503,7 @@ export function openCompose(opts) {
       editor.focus();
       document.execCommand(b.dataset.cmd);
       markDirty();
+      syncFmt();
       return;
     }
     switch (b.dataset.a) {

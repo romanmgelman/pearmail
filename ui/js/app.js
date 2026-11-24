@@ -95,6 +95,10 @@ if (!store.get("avatarsV2", false)) { store.set("avatarsV2", true); settings.lis
 const vips = () => store.get("vips", []);
 const trusted = () => store.get("trustedSenders", []);
 const isVipPerson = (p) => !!p?.email && vips().includes(p.email.toLowerCase());
+/** Blocked senders (lowercase addresses): their inbox mail is moved to Trash. */
+const blocked = () => store.get("blockedSenders", []);
+const isBlockedPerson = (p) => !!p?.email && blocked().includes(p.email.toLowerCase());
+const sweeping = new Set(); // ids being moved to Trash right now (a refresh can see them again meanwhile)
 /** The little badge shown right after a VIP's name. */
 const vipBadge = () => `<span class="vip-badge" title="VIP">${icon("vip")}VIP</span>`;
 const draftBadge = () => `<span class="draft-badge" title="Draft: not sent yet">Draft</span>`;
@@ -819,6 +823,8 @@ function foldersWithPendingSeen(acct, startedAt) {
 }
 
 function acceptMerged(merged, startedAt = Date.now()) {
+  // Blocked senders' inbox mail is on its way to Trash: never show it (sweepBlocked marks it removing).
+  sweepBlocked(merged.messages);
   withPendingFlags(merged.messages, startedAt);
   const kept = withoutRemoving(merged.messages);
   state.messages = kept;
@@ -1997,7 +2003,7 @@ function cardElement(conv, id) {
   const remoteOk = remoteAllowed(d);
   const adapted = messageAdapted(d);
   const people = (label, ps) =>
-    ps.length ? `<div class="rcpts"><b>${label}:</b> ${ps.map((p, i) => `<span class="p" data-i="${label}${i}" title="${esc(p.email)}"><span class="pn">${esc(displayName(p))}</span>${icon("chevronRight", "chev")}</span>`).join("; ")}</div>` : "";
+    ps.length ? `<div class="rcpts"><b>${label}:</b> ${ps.map((p, i) => `<span class="p" data-i="${label}${i}" title="${esc(p.email)}"><span class="pn">${esc(displayName(p))}</span>${icon("chevronRight", "chev")}</span>`).join("")}</div>` : "";
   const acct = acctById(d.account);
   const acctLine = multi() && acct ? `<div class="rcpts acct-line"><span class="acct-dot" style="background:${acctColor(acct.id)}"></span>${esc(acct.email)}</div>` : "";
   el.innerHTML = `
@@ -2646,6 +2652,10 @@ function personMenu(p, rect, onClose) {
       renderReader();
     } },
     { label: "Search for Messages from Sender", icon: "search", action: () => { $("search").value = p.email; setQuery(p.email); } },
+    { sep: true },
+    isBlockedPerson(p)
+      ? { label: "Unblock Sender", icon: "block", action: () => unblockSender(p.email) }
+      : { label: "Block Sender…", icon: "block", danger: true, action: () => blockSenders([p]) },
   ], rect, { onClose });
 }
 
@@ -2657,6 +2667,65 @@ function toggleVip(email) {
   store.set("vips", list);
   toast(i >= 0 ? "Removed from VIP." : "Added to VIP.");
   vipsChanged();
+}
+
+/* ---- Blocked senders ------------------------------------------------------
+ * iCloud has no server rules over IMAP, so the app does it: whenever it sees inbox mail from a
+ * blocked sender (list loads and new-mail checks), that mail is moved to Trash, quietly.
+ */
+/** Move blocked senders' inbox mail among `msgs` to Trash. Returns the ids it started moving. */
+function sweepBlocked(msgs) {
+  if (!blocked().length) return [];
+  const hits = msgs.filter((m) => realFolder(m.folder) === "INBOX" && isBlockedPerson(m.from) && !sweeping.has(m.id) && !state.removing.get(m.id)?.committed);
+  if (!hits.length) return [];
+  const groups = new Map();
+  for (const m of hits) {
+    const k = `${m.account}\n${realFolder(m.folder)}`;
+    if (!groups.has(k)) groups.set(k, { account: m.account, folder: realFolder(m.folder), ids: [], uids: [] });
+    groups.get(k).ids.push(m.id);
+    groups.get(k).uids.push(m.uid);
+  }
+  for (const g of groups.values()) {
+    g.ids.forEach((id) => sweeping.add(id));
+    markRemoving(g.ids);
+    api.moveToRole(g.account, g.folder, g.uids, "trash")
+      .then(() => { markRemoved(g.ids); api.logEvent("blocked", `moved ${g.uids.length} to Trash`); loadFolders(); })
+      .catch((e) => { unmarkRemoving(g.ids); api.logEvent("blocked", `couldn't move to Trash: ${errText(e)}`); })
+      .finally(() => g.ids.forEach((id) => sweeping.delete(id)));
+  }
+  return hits.map((m) => m.id);
+}
+
+async function blockSenders(people) {
+  const mine = new Set(state.accounts.map((a) => a.email.toLowerCase()));
+  const list = [...new Map(people.filter((p) => p?.email && !mine.has(p.email.toLowerCase())).map((p) => [p.email.toLowerCase(), p])).values()];
+  if (!list.length) return toast("You can't block your own address.", { error: true });
+  const who = list.length === 1 ? (list[0].name ? `${list[0].name} (${list[0].email})` : list[0].email) : `${list.length} senders`;
+  const ok = await dialog({
+    title: `Block ${who}?`,
+    message: "Their mail in your inbox moves to Trash, now and whenever new mail from them arrives. Unblock any time from the account menu → Blocked Senders.",
+    ok: "Block",
+    danger: true,
+  });
+  if (!ok) return;
+  store.set("blockedSenders", [...new Set([...blocked(), ...list.map((p) => p.email.toLowerCase())])]);
+  const ids = sweepBlocked(state.messages);
+  if (ids.length) removeFromList(ids);
+  toast(ids.length ? `Blocked. Moved ${count(ids.length)} to Trash.` : "Blocked.");
+}
+
+function unblockSender(email) {
+  const k = email.toLowerCase();
+  store.set("blockedSenders", blocked().filter((x) => x !== k));
+  toast("Unblocked.");
+}
+
+async function manageBlocked() {
+  const r = await dialog({ title: "Blocked Senders", message: "One email address per line. Their inbox mail is moved to Trash.", fields: [{ id: "v", multiline: true, value: blocked().join("\n") }], ok: "Save" });
+  if (!r) return;
+  store.set("blockedSenders", [...new Set(r.v.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter((x) => x.includes("@")))]);
+  const ids = sweepBlocked(state.messages);
+  if (ids.length) removeFromList(ids);
 }
 
 /** The VIP list changed (menu or the VIPs… editor): update everything that shows it. */
@@ -2768,6 +2837,8 @@ function messageMenu() {
     { label: allJunk ? "Not Junk" : "Move to Junk", icon: allJunk ? "inbox" : "junk", action: () => moveToRole(ids, allJunk ? "inbox" : "junk") },
     { label: "Archive", icon: "archive", disabled: !canArchive(ids), action: () => archiveSelected() },
     { label: "Delete", icon: "trash", danger: true, kbd: "Del", action: () => deleteMessages() },
+    { sep: true },
+    { label: new Set(ms.map((m) => m.from?.email?.toLowerCase())).size > 1 ? "Block Senders…" : "Block Sender…", icon: "block", danger: true, disabled: !ms.length, action: () => blockSenders(ms.map((m) => m.from)) },
   ];
 }
 
@@ -2799,6 +2870,9 @@ function moreMenu() {
     { label: "View Source", icon: "doc", action: viewSource },
     { sep: true },
     { label: d && vips().includes(d.from.email.toLowerCase()) ? "Remove Sender from VIP" : "Add Sender to VIP", icon: "vip", disabled: !d, action: () => toggleVip(d.from.email) },
+    d && isBlockedPerson(d.from)
+      ? { label: "Unblock Sender", icon: "block", action: () => unblockSender(d.from.email) }
+      : { label: "Block Sender…", icon: "block", danger: true, disabled: !d, action: () => blockSenders([d.from]) },
   ];
 }
 
@@ -3075,6 +3149,7 @@ $("account-btn").addEventListener("click", (e) => {
     { label: "Add Account…", icon: "plus", action: addAccount },
     { label: "Settings…", icon: "gear", kbd: "Ctrl+,", action: openSettings },
     { label: "Manage VIPs…", icon: "vip", action: manageVips },
+    { label: "Blocked Senders…", icon: "block", action: manageBlocked },
     { sep: true },
     ...(multi()
       ? state.accounts.map((a) => ({ label: `Sign Out ${a.email}…`, icon: "signOut", action: () => removeAccount(a.id) }))
@@ -3410,6 +3485,130 @@ $("list-resizer").addEventListener("mousedown", (e) => {
 /* ------------------------------------------------------------------ */
 /* Refresh / live updates / notifications / errors                     */
 /* ------------------------------------------------------------------ */
+/* ---- "Downloading Messages – 14 of 231" ------------------------------------
+ * The app reports every download of new messages (list rows, Sent sync, bodies) as one running
+ * count. The card only appears for a real batch (10+) that's still going after a moment, so
+ * routine refreshes never flash it.
+ */
+const dl = { el: null, showTimer: null, hideTimer: null, last: { done: 0, total: 0 } };
+function renderDownload() {
+  const { done, total } = dl.last;
+  if (!dl.el) return;
+  dl.el.classList.toggle("above", !!document.querySelector(".send-pending:not(.dl-progress):not(.leaving)"));
+  dl.el.querySelector(".sp-count").textContent = `${Math.min(done, total).toLocaleString()} of ${total.toLocaleString()}`;
+  dl.el.querySelector(".sp-progress div").style.transform = `scaleX(${total ? Math.min(1, done / total) : 1})`;
+}
+listen("download-progress", (e) => {
+  const { done, total } = e.payload;
+  if (total === 0) {
+    // All done: fill the bar, then let it go.
+    clearTimeout(dl.showTimer);
+    dl.showTimer = null;
+    if (dl.el && !dl.hideTimer) {
+      dl.last = { done: dl.last.total, total: dl.last.total };
+      renderDownload();
+      const el = dl.el;
+      dl.hideTimer = setTimeout(() => {
+        el.classList.add("leaving");
+        setTimeout(() => el.remove(), 180);
+        if (dl.el === el) dl.el = null;
+        dl.hideTimer = null;
+      }, 400);
+    }
+    return;
+  }
+  dl.last = { done, total };
+  if (dl.el) {
+    // A new batch started while the card was on its way out: keep it.
+    if (dl.hideTimer) { clearTimeout(dl.hideTimer); dl.hideTimer = null; }
+    renderDownload();
+    return;
+  }
+  if (total < 10 || dl.showTimer) return;
+  dl.showTimer = setTimeout(() => {
+    dl.showTimer = null;
+    if (dl.el || dl.last.total < 10) return;
+    const el = document.createElement("div");
+    el.className = "send-pending dl-progress";
+    el.innerHTML = `<div class="sp-row">${icon("download")}<span class="sp-label">Downloading Messages</span><span class="sp-count"></span></div><div class="sp-progress"><div></div></div>`;
+    document.body.appendChild(el);
+    dl.el = el;
+    renderDownload();
+  }, 400);
+});
+
+/* ---- Pull to refresh -------------------------------------------------------
+ * At the top of the list, keep scrolling up (trackpad swipe or mouse wheel) or drag down
+ * (touch): the list slides down behind an arrow, which flips once it's far enough, and
+ * refreshes. A wheel pull only starts with a fresh gesture made at the top (after a short
+ * pause), so the momentum of scrolling up to the top never refreshes by itself.
+ */
+{
+  const list = $("list"), ind = $("pull-ind");
+  ind.querySelector(".pull-arrow").innerHTML = icon("arrowUp");
+  const THRESHOLD = 70, MAX = 96, HOLD = 44;
+  let pull = 0, busy = false, lastWheel = 0, idleTimer = null, cooldownUntil = 0;
+  const show = (h, settle = false) => {
+    ind.classList.toggle("settling", settle);
+    ind.style.height = `${h}px`;
+    ind.classList.toggle("armed", h >= THRESHOLD && !busy);
+  };
+  const reset = () => { pull = 0; if (!busy) show(0, true); };
+  async function fire() {
+    busy = true;
+    pull = 0;
+    cooldownUntil = Date.now() + 1200;
+    ind.classList.remove("armed");
+    ind.classList.add("loading");
+    show(HOLD, true);
+    try { await refreshAll(true); } finally {
+      busy = false;
+      ind.classList.remove("loading");
+      show(0, true);
+    }
+  }
+  // Rubber-band feel: the further it goes, the less each bit of pull moves it.
+  const eased = (p) => Math.min(MAX, p * (1 - Math.min(p, 200) / 600));
+  list.addEventListener("wheel", (e) => {
+    const now = Date.now();
+    const gap = now - lastWheel;
+    lastWheel = now;
+    if (busy || now < cooldownUntil || e.ctrlKey) return;
+    if (list.scrollTop > 0) { if (pull) reset(); return; }
+    // Pixels moved; a mouse notch counts for ~a third of the way (about 3 notches refresh).
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    if (!pull && (dy >= 0 || gap < 150)) return;
+    // Scrolling up pulls further (capped per event, so one big flick isn't a whole pull);
+    // scrolling back down takes the pull back.
+    pull = Math.max(0, dy < 0 ? pull + Math.min(-dy, 34) : pull - Math.min(dy, 60));
+    if (pull <= 0) { reset(); return; }
+    const h = eased(pull);
+    show(h);
+    clearTimeout(idleTimer);
+    // Let go (no more scrolling for a moment): refresh if it went far enough.
+    idleTimer = setTimeout(() => { if (eased(pull) >= THRESHOLD) fire(); else reset(); }, 220);
+  }, { passive: true });
+
+  let touchY = null;
+  list.addEventListener("touchstart", (e) => {
+    touchY = !busy && list.scrollTop <= 0 && e.touches.length === 1 ? e.touches[0].clientY : null;
+  }, { passive: true });
+  list.addEventListener("touchmove", (e) => {
+    if (touchY === null) return;
+    const dy = e.touches[0].clientY - touchY;
+    if (dy <= 0 || list.scrollTop > 0) { pull = 0; show(0); return; }
+    pull = dy * 0.6;
+    show(eased(pull));
+  }, { passive: true });
+  const touchEnd = () => {
+    if (touchY === null) return;
+    touchY = null;
+    if (eased(pull) >= THRESHOLD) fire(); else reset();
+  };
+  list.addEventListener("touchend", touchEnd);
+  list.addEventListener("touchcancel", touchEnd);
+}
+
 let refreshing = false;
 /** Settle within `ms` no matter what (a stuck network call must not block refreshing). */
 const withTimeout = (p, ms, what) =>
@@ -3426,7 +3625,7 @@ async function refreshAll(manual = false, force = false) {
   refreshing = true;
   refreshStarted = Date.now();
   const btn = $("btn-refresh");
-  if (manual) btn.classList.add("spinning");
+  if (manual) startSpin(btn);
   try {
     const jobs = [withTimeout(loadFolders(), 45000, "folders"), withTimeout(softRefreshList(), 45000, "message list")];
     // New-mail checks for inboxes that aren't on screen.
@@ -3439,11 +3638,45 @@ async function refreshAll(manual = false, force = false) {
   } finally {
     if (run === refreshRun) {
       refreshing = false;
-      setTimeout(() => btn.classList.remove("spinning"), 400);
+      stopSpin(btn);
     }
   }
 }
 let refreshRun = 0;
+
+/* The refresh icon never snaps back mid-turn: when the refresh ends it finishes the turn it's
+ * on, then makes one more that slows to a stop upright. */
+let spinStop = null; // cancels a pending stop when a new refresh starts
+function startSpin(btn) {
+  spinStop?.abort();
+  spinStop = null;
+  btn.classList.remove("spin-out");
+  btn.classList.add("spinning");
+}
+function stopSpin(btn) {
+  if (!btn.classList.contains("spinning")) return;
+  spinStop?.abort();
+  const ctl = (spinStop = new AbortController());
+  const icon = btn.querySelector(".icon");
+  const done = () => {
+    if (ctl.signal.aborted) return;
+    ctl.abort();
+    btn.classList.remove("spinning", "spin-out");
+    if (spinStop === ctl) spinStop = null;
+  };
+  // Hidden button or no animation: no events will come.
+  let fallback = setTimeout(done, 1500);
+  ctl.signal.addEventListener("abort", () => clearTimeout(fallback));
+  if (!icon || reduceMotion()) return done();
+  // A turn just completed (the icon is upright again): glide through one last, slowing turn.
+  icon.addEventListener("animationiteration", () => {
+    if (ctl.signal.aborted) return;
+    clearTimeout(fallback);
+    fallback = setTimeout(done, 2000);
+    btn.classList.replace("spinning", "spin-out");
+    icon.addEventListener("animationend", done, { once: true, signal: ctl.signal });
+  }, { once: true, signal: ctl.signal });
+}
 
 // After sleep or a network change the open connections are dead: reconnect and refresh.
 let lastWake = 0;
@@ -3487,6 +3720,10 @@ listen("notification-clicked", (e) => openFromNotification(e.payload));
 
 /** Notify about unseen inbox messages newer than the last ones we saw (per account). */
 function checkNewMail(inboxMsgs) {
+  // Every account's inbox passes through here on each check: move blocked senders' mail away
+  // (also for inboxes that aren't on screen), and never notify about it.
+  sweepBlocked(inboxMsgs);
+  inboxMsgs = inboxMsgs.filter((m) => !isBlockedPerson(m.from));
   const byAcct = new Map();
   for (const m of inboxMsgs) {
     if (realFolder(m.folder) !== "INBOX") continue;

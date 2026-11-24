@@ -83,7 +83,18 @@ pub fn build(from_email: &str, from_name: &str, m: &OutgoingMessage, for_draft: 
         b = b.references(m.references.join(" "));
     }
 
-    let body = MultiPart::alternative_plain_html(m.text.clone(), m.html.clone());
+    let (html, pictures) = embed_pictures(&m.html, &mid);
+    let body = if pictures.is_empty() {
+        MultiPart::alternative_plain_html(m.text.clone(), html)
+    } else {
+        // alternative[ text, related[ html, pictures… ] ]: the pictures travel with the
+        // message as inline parts the HTML refers to by Content-ID.
+        let mut related = MultiPart::related().singlepart(SinglePart::html(html));
+        for (cid, mime, bytes) in pictures {
+            related = related.singlepart(Attachment::new_inline(cid).body(bytes, mime));
+        }
+        MultiPart::alternative().singlepart(SinglePart::plain(m.text.clone())).multipart(related)
+    };
     let msg = if m.attachments.is_empty() {
         b.multipart(body)?
     } else {
@@ -96,6 +107,56 @@ pub fn build(from_email: &str, from_name: &str, m: &OutgoingMessage, for_draft: 
         b.multipart(mixed)?
     };
     Ok((msg, mid))
+}
+
+/// Pictures written into the body as `data:` URLs (quoted pictures, pasted screenshots) become
+/// inline parts: their `src` turns into `cid:…`, and each distinct picture is returned once as
+/// (Content-ID, type, bytes). Mail apps block `data:` pictures, so they can't go out as they are.
+/// Anything that isn't a well-formed base64 picture is left alone.
+fn embed_pictures(html: &str, mid: &str) -> (String, Vec<(String, ContentType, Vec<u8>)>) {
+    use base64::Engine;
+    use lol_html::{element, rewrite_str, RewriteStrSettings};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    if !html.contains("data:image/") {
+        return (html.to_string(), vec![]);
+    }
+    // Content-IDs share the Message-ID's unique part, so they're unique too.
+    let id = mid.trim_matches(|c| c == '<' || c == '>');
+    let seen: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    let parts: RefCell<Vec<(String, ContentType, Vec<u8>)>> = RefCell::new(vec![]);
+    let out = rewrite_str(
+        html,
+        RewriteStrSettings::new().append_element_content_handler(element!("img[src]", |el| {
+            let src = el.get_attribute("src").unwrap_or_default();
+            let Some(rest) = src.trim().strip_prefix("data:") else { return Ok(()) };
+            let Some((meta, data)) = rest.split_once(',') else { return Ok(()) };
+            let Some(mime) = meta.strip_suffix(";base64") else { return Ok(()) };
+            if !mime.to_ascii_lowercase().starts_with("image/") {
+                return Ok(());
+            }
+            let known = seen.borrow().get(&src).cloned();
+            let cid = if let Some(cid) = known {
+                cid
+            } else {
+                let clean: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+                let (Ok(bytes), Ok(ctype)) = (base64::engine::general_purpose::STANDARD.decode(clean), ContentType::parse(mime)) else {
+                    return Ok(());
+                };
+                let cid = format!("pm{}.{id}", parts.borrow().len() + 1);
+                parts.borrow_mut().push((cid.clone(), ctype, bytes));
+                seen.borrow_mut().insert(src.clone(), cid.clone());
+                cid
+            };
+            el.set_attribute("src", &format!("cid:{cid}"))?;
+            Ok(())
+        })),
+    );
+    match out {
+        Ok(out) => (out, parts.into_inner()),
+        Err(_) => (html.to_string(), vec![]),
+    }
 }
 
 pub async fn send(cfg: &AccountConfig, creds: &Credentials, msg: Message) -> Result<()> {
@@ -183,6 +244,41 @@ mod tests {
         // What actually goes out never carries Bcc.
         let (sent, _) = build("me@icloud.com", "Me", &m, false, None).unwrap();
         assert!(!String::from_utf8(sent.formatted()).unwrap().contains("secret@example.com"));
+    }
+
+    /// Pictures in the body (quoted or pasted) go out as inline parts, each distinct one once,
+    /// and a saved draft reopens with them in the body, not as attachment chips.
+    #[test]
+    fn sends_body_pictures_as_inline_parts() {
+        let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        let m = OutgoingMessage {
+            to: vec!["bob@example.com".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Pics".into(),
+            html: format!("<p>a</p><img src=\"{png}\"><img src=\"{png}\"><img src=\"{gif}\"><img src=\"data:image/png;base64,%%%\"><img src=\"https://x.example/a.png\">"),
+            text: "a".into(),
+            attachments: vec![],
+            in_reply_to: None,
+            references: vec![],
+            draft_uid: None,
+        };
+        let (msg, _) = build("me@icloud.com", "Me", &m, true, None).unwrap();
+        let raw = msg.formatted();
+        let s = String::from_utf8_lossy(&raw);
+        assert!(s.contains("multipart/related"), "{s}");
+        let parsed = crate::mime::parse(&raw).unwrap();
+        assert!(crate::mime::attachments(&parsed).is_empty());
+        assert_eq!(crate::mime::inline_images(&parsed).len(), 2);
+        let html = parsed.body_html(0).unwrap();
+        assert_eq!(html.matches("src=\"cid:").count(), 3, "{html}");
+        assert!(html.contains("https://x.example/a.png"));
+        assert!(html.contains("base64,%%%"), "a broken picture is left as it was");
+
+        // No pictures: the plain structure as before.
+        let (plain, _) = build("me@icloud.com", "Me", &OutgoingMessage { html: "<p>x</p>".into(), ..m }, false, None).unwrap();
+        assert!(!String::from_utf8(plain.formatted()).unwrap().contains("multipart/related"));
     }
 
     #[test]

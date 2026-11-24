@@ -44,6 +44,7 @@ export const ICONS = {
   arrowRight: S('<path d="M5 12h14M13 6l6 6-6 6"/>'),
   refresh: S('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 4.5v4.4h-4.4"/>'),
   download: S('<path d="M12 4v11M7.5 10.8 12 15.3l4.5-4.5"/><path d="M5 19.5h14"/>'),
+  block: S('<circle cx="12" cy="12" r="8.2"/><path d="M6.2 6.2 17.8 17.8"/>'),
   photo: S('<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.6" cy="9.6" r="1.5"/><path d="m4 17 4.6-4.4 3.4 3 3-2.6L20 17.5"/>'),
   print: S('<path d="M7 9V4h10v5"/><rect x="3.5" y="9" width="17" height="7.5" rx="1.8"/><path d="M7 14h10v6H7z"/>'),
   doc: S('<path d="M14 3.5H7.2A1.7 1.7 0 0 0 5.5 5.2v13.6a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V8z"/><path d="M13.8 3.6V8.2h4.5"/>'),

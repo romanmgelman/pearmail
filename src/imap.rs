@@ -868,6 +868,7 @@ impl Imap {
     /// that still fails gets a minimal placeholder instead of breaking the list.
     async fn fetch_summaries(&self, folder: &str, uids: &[u32]) -> Result<Vec<MessageSummary>> {
         let mut out = Vec::with_capacity(uids.len());
+        let mut job = crate::progress::Job::start(uids.len());
         for chunk in uids.chunks(25) {
             match self.fetch_summary_batch(folder, chunk).await {
                 Ok(v) => out.extend(v),
@@ -882,6 +883,7 @@ impl Imap {
                     }
                 }
             }
+            job.add(chunk.len());
         }
         Ok(out)
     }
@@ -1165,6 +1167,7 @@ impl Imap {
             .filter(|u| sizes.get(u).map(|m| (m.size as usize) < 8 * 1024 * 1024).unwrap_or(true))
             .collect();
         let mut done = 0;
+        let mut job = crate::progress::Job::start(todo.len());
         for chunk in todo.chunks(8) {
             let set = uid_set(chunk);
             let real2 = real.clone();
@@ -1185,6 +1188,7 @@ impl Imap {
                     done += 1;
                 }
             }
+            job.add(chunk.len());
         }
         Ok(done)
     }
@@ -1478,6 +1482,7 @@ impl Imap {
         let uids = self.newest_uids(&self.bg, &path, limit).await?;
         let have = self.cache.summaries(&path, &uids);
         let missing: Vec<u32> = uids.into_iter().filter(|u| !have.contains_key(u)).collect();
+        let mut job = crate::progress::Job::start(missing.len());
         for chunk in missing.chunks(50) {
             let (f, set) = (path.clone(), uid_set(chunk));
             let got: Vec<MessageSummary> = self
@@ -1491,6 +1496,7 @@ impl Imap {
                 })
                 .await?;
             self.cache.put_summaries(&path, &got);
+            job.add(chunk.len());
         }
         Ok(missing.len())
     }

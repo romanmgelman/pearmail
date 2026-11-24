@@ -12,6 +12,7 @@ mod mime;
 mod notify;
 mod model;
 mod oauth;
+mod progress;
 mod providers;
 mod smtp;
 mod startup;
@@ -197,6 +198,7 @@ It should show the Pear Mail name and icon.", || {});
                 .build(),
         )
         .setup(move |app| {
+            progress::init(app.handle().clone());
             std::thread::spawn(commands::clean_staging);
             // Safety net: show the window even if the page never signals it's ready.
             use tauri::Manager;

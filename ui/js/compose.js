@@ -15,7 +15,7 @@ export async function flushPendingSend() {
 
 /** The "Sending… Undo Send" bar at the bottom left, like iCloud Mail. */
 function showOutbox(seconds, onUndo) {
-  document.querySelector(".send-pending")?.remove();
+  document.querySelector(".send-pending:not(.dl-progress)")?.remove();
   const bar = document.createElement("div");
   bar.className = "send-pending";
   bar.innerHTML = `<div class="sp-row">${icon("sent")}<span class="sp-label">Sending…</span><button class="sp-undo">Undo Send</button></div><div class="sp-progress"><div></div></div>`;
@@ -263,6 +263,9 @@ export function openCompose(opts) {
       <button class="tb-btn" data-a="link" title="Insert Link">${icon("link")}</button>
       <div class="tb-sep"></div>
       <button class="tb-btn" data-a="attach" title="Attach Files">${icon("paperclip")}</button>
+      ${(mode === "reply" || mode === "replyAll") && source?.attachments?.length
+        ? `<button class="tb-btn inc-atts" data-a="incAtts" title="Attach the files from the message you're replying to">${icon("paperclip")}<span>Include ${source.attachments.length === 1 ? "Attachment" : `${source.attachments.length} Attachments`}</span></button>`
+        : ""}
     </div>
     <div class="compose-body"><div class="editor" contenteditable="true" spellcheck="true">${body}</div></div>
     <div class="compose-atts"></div>`;
@@ -281,6 +284,8 @@ export function openCompose(opts) {
     markDirty();
   });
   let attachments = [];
+  // Settles once the quoted message's embedded pictures are in the editor (save/send wait for it).
+  let quotedPictures = Promise.resolve();
   let dirty = false, sending = false, saving = null, closed = false, savedHere = false;
   if (cc.length || bcc.length) $('[data-f="cc"]').hidden = $('[data-f="bcc"]').hidden = false;
 
@@ -323,6 +328,7 @@ export function openCompose(opts) {
         // Files still being copied in go into the draft too; saving without them would
         // replace a draft that has its attachments with one that doesn't.
         while (attachments.some((a) => a.staging)) await Promise.all(attachments.filter((a) => a.staging).map((a) => a.ready));
+        await quotedPictures;
         const snap = snapshot();
         const uid = await api.saveDraft(from.id, message());
         api.logEvent("draft", `saved (${reason}, ${mode})`);
@@ -367,6 +373,8 @@ export function openCompose(opts) {
     if (saving) await saving;
     // Files still being copied in from a drop go with the message.
     while (attachments.some((a) => a.staging)) await Promise.all(attachments.filter((a) => a.staging).map((a) => a.ready));
+    // Quoted pictures still loading go with the message.
+    await quotedPictures;
     if (pendingSend) await pendingSend.run(); // one message in the outbox at a time
     sending = true;
     const btn = $('[data-a="send"]');
@@ -492,6 +500,12 @@ export function openCompose(opts) {
         dirty = false;
         close(false);
         discardSaved();
+        break;
+      }
+      case "incAtts": {
+        b.remove();
+        includeSourceAttachments();
+        markDirty();
         break;
       }
       case "attach": {
@@ -658,29 +672,56 @@ export function openCompose(opts) {
 
   current = handle();
 
-  // A resumed draft brings its attachments: they're copied out of the saved draft and show
-  // as "loading" chips meanwhile (Send waits for them, like files dropped in).
-  if (mode === "draft" && source?.attachments?.length) {
+  // The source message's attachments (a resumed draft's, a forward's, or a reply's when asked):
+  // they're copied out of the message and show as "loading" chips meanwhile (Send waits for
+  // them, like files dropped in).
+  function includeSourceAttachments() {
     const pending = source.attachments.map((a) => ({ name: a.name || "attachment", size: a.size || 0, staging: true }));
     const ready = api.stageMessageAttachments(source.account, source.folder, source.uid).then(
       (files) => {
         pending.forEach((a, i) => (files[i] ? Object.assign(a, files[i], { staging: false }) : attachments.splice(attachments.indexOf(a), 1)));
         renderAtts();
-        // Loading them isn't an edit; they're part of how the draft was saved.
+        // Loading them isn't an edit; they're part of how the message started out.
         if (!dirty) saved = snapshot();
       },
       (err) => {
         pending.forEach((a) => attachments.splice(attachments.indexOf(a), 1));
         renderAtts();
-        // Keep the original draft (with its attachments) instead of replacing it with a copy that lacks them.
-        draftUid = null;
-        toast(`Couldn't load this draft's attachments: ${errText(err)}. The original draft stays in Drafts.`, { error: true, duration: 8000 });
+        if (mode === "draft") {
+          // Keep the original draft (with its attachments) instead of replacing it with a copy that lacks them.
+          draftUid = null;
+          toast(`Couldn't load this draft's attachments: ${errText(err)}. The original draft stays in Drafts.`, { error: true, duration: 8000 });
+        } else {
+          toast(`Couldn't attach the original message's files: ${errText(err)}`, { error: true, duration: 8000 });
+        }
       },
     );
     pending.forEach((a) => (a.ready = ready));
     attachments.push(...pending);
     renderAtts();
   }
+  if ((mode === "draft" || mode === "forward") && source?.attachments?.length) includeSourceAttachments();
+
+  // Pictures embedded in the quoted message arrive as blank placeholders (data-pm-part, as in
+  // the reader): fetch the real ones so they show here and go out with the message.
+  async function loadQuotedPictures() {
+    if (!source || mode === "new") return;
+    const queue = [...editor.querySelectorAll("img[data-pm-part]")];
+    if (!queue.length) return;
+    const worker = async () => {
+      for (let img; (img = queue.shift()); ) {
+        const idx = +img.dataset.pmPart;
+        img.removeAttribute("data-pm-part");
+        const url = await api.inlineImage(source.account, source.folder, source.uid, idx).catch(() => null);
+        if (url) img.src = url;
+        else img.remove(); // an invisible placeholder would only take up space
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    // Loading them isn't an edit; they were part of the message from the start.
+    if (!dirty) saved = snapshot();
+  }
+  quotedPictures = loadQuotedPictures();
 
   // Baseline for "changed?" (again after a frame, once the editor has settled its HTML).
   saved = snapshot();

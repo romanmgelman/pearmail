@@ -54,6 +54,9 @@ export const ICONS = {
   textFormat: S('<path d="M3.5 18 8 6l4.5 12M5.2 13.8h5.6"/><path d="M14.5 12.3c.5-1.1 1.6-1.7 2.9-1.7 1.8 0 2.9 1 2.9 2.8V18M20.3 15c-3.5-.3-5.6.3-5.6 1.7 0 .9.8 1.5 1.9 1.5 1.6 0 3.7-1 3.7-3.2"/>'),
   signOut: S('<path d="M14 4.5H6.7A1.7 1.7 0 0 0 5 6.2v11.6a1.7 1.7 0 0 0 1.7 1.7H14"/><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5"/>'),
   moon: S('<path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z"/>'),
+  // Sun for the small light/dark switches, in the moon's thin line style: a wider ring and
+  // short rays set well apart from it, so they don't run together at 13–14px.
+  sunSmall: S('<circle cx="12" cy="12" r="4.6"/><path d="M12 1.6v2.2M12 20.2v2.2M1.6 12h2.2M20.2 12h2.2M4.65 4.65l1.55 1.55M17.8 17.8l1.55 1.55M19.35 4.65l-1.55 1.55M6.2 17.8l-1.55 1.55"/>'),
   sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2.8v2M12 19.2v2M21.2 12h-2M4.8 12h-2M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4M18.5 18.5l-1.4-1.4M6.9 6.9 5.5 5.5"/>'),
   info: S('<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2"/><circle cx="12" cy="7.9" r=".9" fill="currentColor"/>'),
   starFill: S('<path d="m12 3.6 2.55 5.2 5.7.82-4.12 4.03.97 5.67L12 16.64l-5.1 2.68.97-5.67L3.75 9.62l5.7-.82z"/>', true),

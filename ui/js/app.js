@@ -236,9 +236,8 @@ function isDark() {
 function fillStaticIcons() {
   $("btn-hide-sidebar").innerHTML = icon("sidebar");
   $("btn-show-sidebar").innerHTML = icon("sidebar");
-  $("btn-refresh").innerHTML = icon("refresh");
   $("brand-pear").innerHTML = icon("pearSolid");
-  $("btn-theme").innerHTML = `<span class="ts-icon ts-sun">${icon("sun")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span>`;
+  $("btn-theme").innerHTML = `<span class="ts-icon ts-sun">${icon("sunSmall")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span>`;
   $("btn-filter").innerHTML = icon("filter");
   $("btn-compose").innerHTML = icon("compose");
   $("search-icon").innerHTML = icon("search");
@@ -728,7 +727,6 @@ function selectFolder(key) {
 
 $("btn-hide-sidebar").onclick = () => { saveSetting("sidebarHidden", true); applySettings(); };
 $("btn-show-sidebar").onclick = () => { saveSetting("sidebarHidden", false); applySettings(); };
-$("btn-refresh").onclick = () => refreshAll(true);
 $("btn-theme").onclick = toggleDark;
 // Windows switched light/dark. Only matters in Automatic mode, and only if the result
 // actually differs from what's shown (our own title-bar update also fires this event).
@@ -2024,7 +2022,7 @@ function cardElement(conv, id) {
         </div>
         <div class="head-right">
           <div class="head-actions">
-            ${!isPlain(d) ? `<button class="theme-switch small hd-light${adapted ? " on" : ""}" role="switch" aria-checked="${adapted}" title="Dark mode for this message"><span class="ts-icon ts-sun">${icon("sun")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span></button>` : ""}
+            ${!isPlain(d) ? `<button class="theme-switch small hd-light${adapted ? " on" : ""}" role="switch" aria-checked="${adapted}" title="Dark mode for this message"><span class="ts-icon ts-sun">${icon("sunSmall")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span></button>` : ""}
             ${isDraft
               ? `<button class="mini-btn labeled" data-reply="edit" title="Continue writing this draft">${icon("compose")}<span>Continue Editing</span></button>`
               : `<button class="mini-btn labeled" data-reply="reply" title="Reply">${icon("reply")}<span>Reply</span></button>
@@ -3253,7 +3251,7 @@ function accountsSettingsHtml() {
 }
 
 /** The per-message light/dark slider, drawn small and inert for the Settings hint. */
-const hintSwitch = `<span class="theme-switch small on hint-switch" aria-hidden="true"><span class="ts-icon ts-sun">${icon("sun")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span></span>`;
+const hintSwitch = `<span class="theme-switch small on hint-switch" aria-hidden="true"><span class="ts-icon ts-sun">${icon("sunSmall")}</span><span class="ts-icon ts-moon">${icon("moon")}</span><span class="knob"></span></span>`;
 
 /** Fade a window's backdrop out while the window settles back down, then remove it. */
 function dismissModal(back) {
@@ -3458,7 +3456,7 @@ document.addEventListener("keydown", (e) => {
   if (ctrl && k === "-") { e.preventDefault(); setZoom(settings.zoom - 10); return; }
   if (ctrl && k === "0") { e.preventDefault(); setZoom(100); return; }
   if (ctrl && k === "p") { e.preventDefault(); printMessage(); return; }
-  if (k === "f5") { e.preventDefault(); refreshAll(true); return; }
+  if (k === "f5") { e.preventDefault(); pullRefresh(); return; }
   if (typing) return;
   // In Drafts, shortcuts match the draft menus: no replying, read/unread, junk or archive.
   if (inDrafts() && ((ctrl && (k === "r" || (e.shiftKey && (k === "f" || k === "u" || k === "j")))) || (!ctrl && k === "e"))) {
@@ -3581,8 +3579,10 @@ listen("download-progress", (e) => {
  * At the top of the list, keep scrolling up (trackpad swipe or mouse wheel) or drag down
  * (touch): the list slides down behind an arrow, which flips once it's far enough, and
  * refreshes. A wheel pull only starts with a fresh gesture made at the top (after a short
- * pause), so the momentum of scrolling up to the top never refreshes by itself.
+ * pause), so the momentum of scrolling up to the top never refreshes by itself. F5 opens the
+ * same spinner.
  */
+let pullRefresh = () => refreshAll(true);
 {
   const list = $("list"), ind = $("pull-ind");
   ind.querySelector(".pull-arrow").innerHTML = icon("arrowUp");
@@ -3595,6 +3595,7 @@ listen("download-progress", (e) => {
   };
   const reset = () => { pull = 0; if (!busy) show(0, true); };
   async function fire() {
+    if (busy) return;
     busy = true;
     pull = 0;
     cooldownUntil = Date.now() + 1200;
@@ -3608,6 +3609,7 @@ listen("download-progress", (e) => {
     }
   }
   // Rubber-band feel: the further it goes, the less each bit of pull moves it.
+  pullRefresh = fire;
   const eased = (p) => Math.min(MAX, p * (1 - Math.min(p, 200) / 600));
   list.addEventListener("wheel", (e) => {
     const now = Date.now();
@@ -3664,8 +3666,6 @@ async function refreshAll(manual = false, force = false) {
   const run = ++refreshRun;
   refreshing = true;
   refreshStarted = Date.now();
-  const btn = $("btn-refresh");
-  if (manual) startSpin(btn);
   try {
     const jobs = [withTimeout(loadFolders(), 45000, "folders"), withTimeout(softRefreshList(), 45000, "message list")];
     // New-mail checks for inboxes that aren't on screen.
@@ -3678,45 +3678,10 @@ async function refreshAll(manual = false, force = false) {
   } finally {
     if (run === refreshRun) {
       refreshing = false;
-      stopSpin(btn);
     }
   }
 }
 let refreshRun = 0;
-
-/* The refresh icon never snaps back mid-turn: when the refresh ends it finishes the turn it's
- * on, then makes one more that slows to a stop upright. */
-let spinStop = null; // cancels a pending stop when a new refresh starts
-function startSpin(btn) {
-  spinStop?.abort();
-  spinStop = null;
-  btn.classList.remove("spin-out");
-  btn.classList.add("spinning");
-}
-function stopSpin(btn) {
-  if (!btn.classList.contains("spinning")) return;
-  spinStop?.abort();
-  const ctl = (spinStop = new AbortController());
-  const icon = btn.querySelector(".icon");
-  const done = () => {
-    if (ctl.signal.aborted) return;
-    ctl.abort();
-    btn.classList.remove("spinning", "spin-out");
-    if (spinStop === ctl) spinStop = null;
-  };
-  // Hidden button or no animation: no events will come.
-  let fallback = setTimeout(done, 1500);
-  ctl.signal.addEventListener("abort", () => clearTimeout(fallback));
-  if (!icon || reduceMotion()) return done();
-  // A turn just completed (the icon is upright again): glide through one last, slowing turn.
-  icon.addEventListener("animationiteration", () => {
-    if (ctl.signal.aborted) return;
-    clearTimeout(fallback);
-    fallback = setTimeout(done, 2000);
-    btn.classList.replace("spinning", "spin-out");
-    icon.addEventListener("animationend", done, { once: true, signal: ctl.signal });
-  }, { once: true, signal: ctl.signal });
-}
 
 // After sleep or a network change the open connections are dead: reconnect and refresh.
 let lastWake = 0;

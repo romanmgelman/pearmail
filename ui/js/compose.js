@@ -2,6 +2,7 @@
 import { api, esc, fileSize, longDate, displayName, store, errText, rememberContacts } from "./api.js";
 import { icon } from "./icons.js";
 import { toast, showMenu, dialog } from "./ui.js";
+import { signatureToHtml, signatureIsEmpty } from "./richtext.js";
 
 let current = null; // active compose controller
 let avatarFn = null; // (person) => avatar HTML, provided by the app
@@ -187,7 +188,7 @@ export function openCompose(opts) {
   let to = opts.to || [], cc = [], bcc = [], subject = "", body = "<div><br></div>", inReplyTo = null, references = [];
   let draftUid = null;
   const openedDraft = mode === "draft" ? source?.uid : null;
-  const sig = opts.signature?.trim() ? `<div><br></div><div class="pm-signature">${esc(opts.signature.trim()).split("\n").join("<br>")}</div>` : "";
+  const sig = signatureIsEmpty(opts.signature) ? "" : `<div><br></div><div class="pm-signature">${signatureToHtml(opts.signature)}</div>`;
   if (mode === "new") body = `<div><br></div>${sig}`;
 
   if (source && (mode === "reply" || mode === "replyAll")) {

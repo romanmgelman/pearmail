@@ -3,6 +3,7 @@ import { icon, ROLE_ICON } from "./icons.js";
 import { buildThreads, threadSeedIds, normSubject } from "./threads.js";
 import { showMenu, closeMenu, toast, dialog, isMenuOpen, dragReorder } from "./ui.js";
 import { renderPdf, pdfThumbnail } from "./pdfview.js";
+import { cleanSignatureHtml, signatureToHtml, signatureIsEmpty, fmtBarHtml, attachFmtBar } from "./richtext.js";
 // Loaded on demand (lazy) so startup only parses what the first screen needs.
 let composeMod = null;
 const loadCompose = () => import("./compose.js").then((m) => (composeMod = m));
@@ -3291,7 +3292,7 @@ async function openSettings() {
     <div class="set-row"><span>Text size</span>${radio("zoom", [[90, "Small"], [100, "Default"], [115, "Large"], [130, "Larger"]], settings.zoom)}</div>
     <div class="set-sec">Composing</div>
     <div class="set-row"><span>Undo Send delay</span>${radio("undoSendDelay", [[0, "Off"], [5, "5 s"], [10, "10 s"], [20, "20 s"], [30, "30 s"]], settings.undoSendDelay)}</div>
-    <div class="set-col"><span>Signature</span><textarea name="signature" placeholder="e.g. Sent from Pear Mail">${esc(settings.signature)}</textarea></div>
+    <div class="set-col"><span>Signature</span><div class="sig-box"><div class="fmt-bar sig-bar">${fmtBarHtml()}</div><div class="sig-editor" contenteditable="true" spellcheck="true" data-placeholder="e.g. Sent from Pear Mail">${signatureToHtml(settings.signature)}</div></div></div>
     <div class="set-sec">Startup</div>
     ${toggle("openAtLogin", "Open Pear Mail when I sign in to Windows", false)}
     <div class="set-row startup-mode" hidden><span><span class="tl">Open in</span><span class="th">In the background, Pear Mail starts in the notification area and notifies you about new mail. This needs "Keep running in the background".</span></span>${radio("startupMode", [["window", "Window"], ["background", "Background"]], "window")}</div>
@@ -3325,9 +3326,19 @@ async function openSettings() {
     showStartup(startup);
   };
   dragReorder(back.querySelector(".acct-list"), { item: ".acct-row", handle: ".acct-grip", idOf: (el) => el.dataset.acct, onDrop: (ids) => ids && reorderAccounts(ids, "settings") });
+  // The signature editor: bold, italics, underline, size and links.
+  const sigEditor = back.querySelector(".sig-editor");
+  const unhookSig = attachFmtBar(back.querySelector(".sig-bar"), sigEditor);
+  const sigEmptyClass = () => sigEditor.classList.toggle("empty", !sigEditor.textContent.trim() && !sigEditor.querySelector("img"));
+  sigEditor.addEventListener("input", sigEmptyClass);
+  sigEmptyClass();
+  // Unhook when the window goes away (Done, Cancel, or anything else that removes it).
+  new MutationObserver((_, obs) => { if (!back.isConnected) { unhookSig(); obs.disconnect(); } }).observe(document.body, { childList: true });
   // Text fields are saved by Save and Done (switches apply right away).
   const save = async () => {
-    saveSetting("signature", back.querySelector('[name="signature"]').value);
+    const sigHtml = cleanSignatureHtml(sigEditor.innerHTML);
+    // No formatting at all? Store it as plain text (entities like &amp; would otherwise be read as text).
+    saveSetting("signature", signatureIsEmpty(sigHtml) ? "" : /<[a-z][^>]*>/i.test(sigHtml) ? sigHtml : sigEditor.innerText.trim());
     // Per-account names: what it's called here, and what people you email see.
     for (const row of back.querySelectorAll(".acct-row")) {
       const a = acctById(row.dataset.acct);

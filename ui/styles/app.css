@@ -411,10 +411,21 @@ input, textarea { font: inherit; color: inherit; }
 .att-more { font-size: 12px; color: var(--text-3); }
 .list-scroll:focus-within .msg-row.selected .att-chip { border-color: rgba(255,255,255,0.5); color: #fff; background: rgba(255, 255, 255, 0.18); }
 .row-actions {
-  position: absolute; right: 10px; bottom: 8px; display: none; gap: 2px; padding: 2px;
+  position: absolute; right: 10px; bottom: 8px; display: flex; gap: 2px; padding: 2px;
   border-radius: 8px; background: var(--bg-elevated); box-shadow: var(--shadow-menu);
+  /* Hidden: shrunk into its corner. Leaving is quicker than arriving. */
+  opacity: 0; visibility: hidden; pointer-events: none; transform: scale(0.85); transform-origin: right bottom;
+  transition: opacity 0.13s ease-in, transform 0.13s ease-in, visibility 0s linear 0.13s;
 }
-.msg-row:hover .row-actions { display: flex; }
+/* Grows out of the corner, at once. A transition (not a keyframe animation) so a re-rendered
+ * row under the pointer does not replay it. */
+.msg-row:hover .row-actions {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: none;
+  transition: opacity 0.07s ease-out, transform 0.12s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-actions, .msg-row:hover .row-actions { transform: none; transition: opacity 0.1s ease, visibility 0s; }
+}
 .row-actions button { width: 26px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; padding: 3px; display: flex; align-items: center; justify-content: center; }
 .row-actions button:hover { background: var(--row-hover); color: var(--accent); }
 .row-actions button[data-act="delete"]:hover { color: var(--danger); }
@@ -513,6 +524,9 @@ input, textarea { font: inherit; color: inherit; }
 .viewer-bar .mini-btn { color: #f5f5f7; }
 .viewer-bar .mini-btn .icon { color: #f5f5f7; }
 .viewer-bar .mini-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.viewer-bar .mini-btn:disabled { opacity: 0.45; pointer-events: none; }
+/* Holds the pages handed to the print dialog; never seen on screen. */
+.print-frame { position: fixed; right: 0; bottom: 0; width: 0; height: 0; border: 0; }
 .viewer-stage { position: absolute; inset: 60px 80px 30px; display: flex; align-items: center; justify-content: center; }
 .viewer-stage .spinner { position: absolute; border-color: rgba(255,255,255,0.2); border-top-color: #fff; }
 .viewer-stage img { position: relative; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); background: #fff; transition: opacity 0.15s; }

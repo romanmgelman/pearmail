@@ -2,7 +2,7 @@ import { api, listen, openUrl, esc, initials, displayName, listDate, longDate, f
 import { icon, ROLE_ICON } from "./icons.js";
 import { buildThreads, threadSeedIds, normSubject } from "./threads.js";
 import { showMenu, closeMenu, toast, dialog, isMenuOpen, dragReorder } from "./ui.js";
-import { renderPdf, pdfThumbnail } from "./pdfview.js";
+import { renderPdf, pdfThumbnail, pdfPrintPages } from "./pdfview.js";
 import { cleanSignatureHtml, signatureToHtml, signatureIsEmpty, fmtBarHtml, attachFmtBar } from "./richtext.js";
 // Loaded on demand (lazy) so startup only parses what the first screen needs.
 let composeMod = null;
@@ -2458,6 +2458,7 @@ function openPreview(d, startIdx, frame = null) {
   back.innerHTML = `<div class="viewer-bar">
       <span class="viewer-name"></span><span class="viewer-count"></span><div class="spacer"></div>
       <button class="mini-btn labeled" data-v="open">${icon("expand")}<span>Open</span></button>
+      <button class="mini-btn labeled" data-v="print" title="Print (Ctrl+P)">${icon("print")}<span>Print</span></button>
       <button class="mini-btn labeled" data-v="png">${icon("photo")}<span>Save as PNG</span></button>
       <button class="mini-btn labeled" data-v="save">${icon("download")}<span>Save</span></button>
       <button class="mini-btn" data-v="close" title="Close (Esc)">${icon("xmark")}</button>
@@ -2489,6 +2490,7 @@ function openPreview(d, startIdx, frame = null) {
     back.querySelector(".viewer-count").textContent = fileCount();
     back.querySelector(".prev").hidden = back.querySelector(".next").hidden = items.length < 2;
     back.querySelector("[data-v=png]").hidden = kind !== "image" || /png/i.test(a.mime);
+    back.querySelector("[data-v=print]").hidden = kind !== "image" && kind !== "pdf";
     dropBlob();
     stage.className = "viewer-stage kind-" + kind;
     stage.innerHTML = `<span class="spinner"></span>`;
@@ -2552,9 +2554,61 @@ function openPreview(d, startIdx, frame = null) {
       handleError(e, true);
     }
   };
+  // Printing: the picture, or every page of the PDF, laid out in a hidden frame of its own
+  // and handed to the print dialog (the same way a message prints from its frame).
+  let dropPrint = null;
+  const printItem = async () => {
+    const a = items[pos];
+    const kind = previewKind(a);
+    const btn = back.querySelector("[data-v=print]");
+    if ((kind !== "image" && kind !== "pdf") || btn.disabled) return;
+    btn.disabled = true;
+    dropPrint?.();
+    let pages = null;
+    try {
+      let urls, css;
+      if (kind === "image") {
+        const url = stage.querySelector("img")?.src || (await api.attachmentPreview(d.account, d.folder, d.uid, a.index, 2400));
+        if (!url) return;
+        urls = [url];
+        css = `html, body { margin: 0; } img { display: block; margin: 0 auto; max-width: 100%; max-height: 100vh; }`;
+      } else {
+        pages = await pdfPrintPages(await bytes(a), { alive: () => back.isConnected });
+        if (!pages) return;
+        urls = pages.urls;
+        // The PDF's pages carry their own margins: each fills one sheet.
+        css = `@page { margin: 0; size: ${pages.landscape ? "landscape" : "portrait"}; } html, body { margin: 0; }
+          .pg { width: 100vw; height: 100vh; overflow: hidden; display: flex; align-items: center; justify-content: center; break-after: page; }
+          .pg:last-child { break-after: auto; } img { display: block; max-width: 100%; max-height: 100%; }`;
+      }
+      const f = document.createElement("iframe");
+      f.className = "print-frame";
+      f.setAttribute("aria-hidden", "true");
+      const loaded = new Promise((res) => f.addEventListener("load", res, { once: true }));
+      f.srcdoc = `<!doctype html><meta charset="utf-8"><title>${esc(a.name)}</title><style>${css}</style>` +
+        urls.map((u) => `<div class="pg"><img src="${esc(u)}" alt=""></div>`).join("");
+      const owned = pages;
+      pages = null; // the frame owns the pictures from here
+      const drop = () => { f.remove(); owned?.release(); if (dropPrint === drop) dropPrint = null; };
+      dropPrint = drop;
+      document.body.appendChild(f);
+      await loaded;
+      await Promise.all([...f.contentDocument.images].map((im) => im.decode().catch(() => {})));
+      if (!f.isConnected) return;
+      f.contentWindow.addEventListener("afterprint", drop, { once: true });
+      f.contentWindow.focus();
+      f.contentWindow.print();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      pages?.release();
+      btn.disabled = false;
+    }
+  };
   const close = () => {
     document.removeEventListener("keydown", onKey, true);
     stage.querySelectorAll("video, audio").forEach((m) => m.pause());
+    dropPrint?.();
     dropBlob();
     dismissModal(back);
   };
@@ -2563,6 +2617,7 @@ function openPreview(d, startIdx, frame = null) {
     if (back._closing) return;
     e.stopPropagation();
     if (e.key === "Escape") return close();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); return void printItem(); }
     // Arrows belong to a focused media player; otherwise they change file.
     if (e.target.closest?.("video, audio, pre")) return;
     if (e.key === "ArrowRight") step(1);
@@ -2589,6 +2644,7 @@ function openPreview(d, startIdx, frame = null) {
       if (b.dataset.v === "close") close();
       if (b.dataset.v === "prev") step(-1);
       if (b.dataset.v === "next") step(1);
+      if (b.dataset.v === "print") await printItem();
       if (b.dataset.v === "open") await api.openAttachment(d.account, d.folder, d.uid, a.index);
       if (b.dataset.v === "save" && (await api.saveAttachment(d.account, d.folder, d.uid, a.index))) toast("Attachment saved.");
       if (b.dataset.v === "png" && (await api.saveAttachmentPng(d.account, d.folder, d.uid, a.index))) toast("Image saved as PNG.");

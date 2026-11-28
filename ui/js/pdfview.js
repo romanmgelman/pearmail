@@ -176,6 +176,48 @@ export async function renderPdf(stage, buf, { onPage, alive = () => true } = {})
   };
 }
 
+const PRINT_DPI = 150;
+const PRINT_MAX_PX = 2600; // longest side of a printed page picture
+
+/**
+ * Every page of a PDF as a picture for printing. Returns `{ urls, landscape, release }`:
+ * blob URLs in page order, whether the first page is wider than tall, and a function
+ * that frees the pictures. Returns null when `alive()` turns false part-way.
+ */
+export async function pdfPrintPages(buf, { alive = () => true } = {}) {
+  const doc = await open(buf);
+  const urls = [];
+  const release = () => urls.forEach((u) => URL.revokeObjectURL(u));
+  let landscape = false;
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const v1 = page.getViewport({ scale: 1 });
+      if (i === 1) landscape = v1.width > v1.height;
+      const scale = Math.min(PRINT_DPI / 72, PRINT_MAX_PX / Math.max(v1.width, v1.height));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.92));
+      canvas.width = canvas.height = 0; // give the pixels back right away
+      if (!blob) throw new Error("Couldn't prepare page " + i + " for printing.");
+      urls.push(URL.createObjectURL(blob));
+      if (!alive()) { release(); return null; }
+    }
+    return { urls, landscape, release };
+  } catch (e) {
+    release();
+    throw e;
+  } finally {
+    doc.destroy();
+  }
+}
+
 /** First page of a PDF as a PNG data URL, `width` px wide (for attachment tiles). */
 export async function pdfThumbnail(buf, width = 360) {
   const doc = await open(buf);
